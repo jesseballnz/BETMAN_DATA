@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/discovery", tags=["AI Discovery"])
+router = APIRouter(prefix="/discovery", tags=["discovery"])
 
 
 class DiscoveredPatternItem(BaseModel):

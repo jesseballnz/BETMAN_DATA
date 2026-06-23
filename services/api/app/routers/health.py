@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -31,7 +31,7 @@ async def health() -> HealthResponse:
         status="ok",
         version=settings.api_version,
         environment=settings.environment,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         db=db_status,
         redis=redis_status,
     )

@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/market", tags=["Market Intelligence"])
+router = APIRouter(prefix="/market", tags=["market"])
 
 
 class MarketSignalItem(BaseModel):

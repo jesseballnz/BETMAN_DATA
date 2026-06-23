@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/pedigree", tags=["Pedigree"])
+router = APIRouter(prefix="/pedigree", tags=["pedigree"])
 
 
 class PedigreeDetail(BaseModel):
