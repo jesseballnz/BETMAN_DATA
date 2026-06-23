@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     api_version: str = "1.0.0"
+    api_root_path: str = ""
     environment: str = "development"
     log_level: str = "info"
 

@@ -50,6 +50,7 @@ app = FastAPI(
         "for multi-tenant OEM licensing."
     ),
     version=settings.api_version,
+    root_path=settings.api_root_path,
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
