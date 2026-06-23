@@ -134,7 +134,7 @@ interface PeopleQueryOptions {
   group_by?: string
 }
 
-function withQuery(path: string, query: Record<string, string | number | undefined>) {
+function withQuery(path: string, query: Record<string, string | number | null | undefined>) {
   const params = new URLSearchParams()
   Object.entries(query).forEach(([key, value]) => {
     if (value === undefined || value === null || value === '') return

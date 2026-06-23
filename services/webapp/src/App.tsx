@@ -38,6 +38,14 @@ const distancePresets: Array<{ key: string; label: string; min?: number; max?: n
   { key: 'mile', label: 'Mile 1201m-1600m', min: 1201, max: 1600 },
   { key: 'staying', label: 'Staying 1601m+', min: 1601 },
 ]
+const MIN_HEATMAP_SCALE = 12
+const DEFAULT_SUPPORT_HIT_TEXT = 'Search result item'
+const BARRIER_HEATMAP_COLORS = ['#13293d', '#0ea5e9', '#22d3ee', '#67e8f9']
+const TRACK_HEATMAP_COLORS = ['#1e1b4b', '#1d4ed8', '#0891b2', '#67e8f9']
+
+function getSignalType(item: { signal_type?: string; indicator_type?: string; pattern_type?: string }) {
+  return item.signal_type ?? item.indicator_type ?? item.pattern_type ?? 'signal'
+}
 
 function App() {
   return (
@@ -48,7 +56,7 @@ function App() {
             <div>
               <p className="text-xs uppercase tracking-[0.35em] text-cyan-400">BETMAN_DATA</p>
               <h1 className="text-3xl font-semibold text-white">Data Viewer</h1>
-              <p className="text-sm text-slate-400">Live command centre for finding order in market chaos.</p>
+              <p className="text-sm text-slate-400">Live command center for finding order in market chaos.</p>
             </div>
             <nav className="grid gap-2 sm:grid-cols-3 lg:flex">
               {navigation.map(({ to, label, icon: Icon }) => (
@@ -97,7 +105,9 @@ function OverviewView() {
 
   useEffect(() => {
     if (!data) return
-    const pulsePoint = Object.values(data.ingestion_last_24h).reduce((acc, value) => acc + value, 0)
+    const pulsePoint = Object.values(data.ingestion_last_24h).reduce((acc, value) => {
+      return typeof value === 'number' ? acc + value : acc
+    }, 0)
     setLivePulse((current) => [...current.slice(-29), pulsePoint])
   }, [data])
 
@@ -207,7 +217,10 @@ function TodayView() {
       },
       {
         queryKey: ['odds', raceId],
-        queryFn: () => api.getRaceOddsDrift(raceId as number),
+        queryFn: () => {
+          if (raceId === null) throw new Error('Race id required')
+          return api.getRaceOddsDrift(raceId)
+        },
         enabled: raceId !== null,
         refetchInterval: POLLING_INTERVALS.odds,
       },
@@ -306,7 +319,10 @@ function SignalsView() {
     queries: [
       {
         queryKey: ['signal-odds-drift', raceId],
-        queryFn: () => api.getRaceOddsDrift(raceId as number),
+        queryFn: () => {
+          if (raceId === null) throw new Error('Race id required')
+          return api.getRaceOddsDrift(raceId)
+        },
         enabled: raceId !== null,
         refetchInterval: POLLING_INTERVALS.odds,
       },
@@ -384,7 +400,7 @@ function SignalsView() {
               <div key={`${item.runner_name ?? 'signal'}-${index}`} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-medium text-white">{item.runner_name ?? 'Signal'}</span>
-                  <span className="text-cyan-300">{item.signal_type ?? item.indicator_type}</span>
+                  <span className="text-cyan-300">{getSignalType(item)}</span>
                 </div>
                 <div className="mt-1 text-xs text-slate-400">{formatDateTime(item.detected_at)}</div>
               </div>
@@ -653,7 +669,7 @@ function AssistantResult({ result, supportHits }: { result?: AssistantResponse; 
           {supportHits.length ? (
             supportHits.slice(0, 6).map((hit, index) => (
               <div key={index} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-sm text-slate-300">
-                {JSON.stringify(hit)}
+                {formatSupportHit(hit)}
               </div>
             ))
           ) : (
@@ -970,13 +986,13 @@ function buildBarrierHeatmapChart(data?: BarrierResponse) {
     },
     visualMap: {
       min: 0,
-      max: Math.max(12, ...barriers.map((item) => item.place_rate)),
+      max: barriers.reduce((max, item) => Math.max(max, item.place_rate), MIN_HEATMAP_SCALE),
       calculable: true,
       orient: 'horizontal',
       left: 'center',
       bottom: 0,
       textStyle: { color: '#cbd5e1' },
-      inRange: { color: ['#13293d', '#0ea5e9', '#22d3ee', '#67e8f9'] },
+      inRange: { color: BARRIER_HEATMAP_COLORS },
     },
     series: [{ type: 'heatmap', data: values, label: { show: true, color: '#f8fafc', formatter: (params: { value: [number, number, number] }) => `${params.value[2].toFixed(1)}%` } }],
     grid: { top: 20, left: 56, right: 20, bottom: 72 },
@@ -1008,7 +1024,7 @@ function buildTrackHeatmapChart(data?: HeatmapResponse) {
       left: 'center',
       bottom: 0,
       textStyle: { color: '#cbd5e1' },
-      inRange: { color: ['#1e1b4b', '#1d4ed8', '#0891b2', '#67e8f9'] },
+      inRange: { color: TRACK_HEATMAP_COLORS },
     },
     series: [{ type: 'heatmap', data: matrix, label: { show: true, color: '#f8fafc', formatter: (params: { value: [number, number, number] }) => params.value[2].toFixed(0) } }],
     grid: { top: 12, left: 58, right: 20, bottom: 70 },
@@ -1062,6 +1078,25 @@ function buildAssistantChart(result: AssistantResponse) {
     ],
     grid: { left: 40, right: 20, top: 20, bottom: 60 },
   }
+}
+
+function formatSupportHit(hit: Record<string, unknown>) {
+  const preferredKeys = ['title', 'description', 'text', 'content', 'source', 'scene', 'date', 'track_name']
+  const preferredParts = preferredKeys
+    .map((key) => {
+      const value = hit[key]
+      return value === undefined || value === null || value === '' ? null : `${key.replace(/_/g, ' ')}: ${String(value)}`
+    })
+    .filter((value): value is string => Boolean(value))
+
+  if (preferredParts.length > 0) {
+    return preferredParts.join(' • ')
+  }
+
+  const fallbackEntries = Object.entries(hit)
+    .slice(0, 3)
+    .map(([key, value]) => `${key.replace(/_/g, ' ')}: ${String(value)}`)
+  return fallbackEntries.length > 0 ? fallbackEntries.join(' • ') : DEFAULT_SUPPORT_HIT_TEXT
 }
 
 export default App
