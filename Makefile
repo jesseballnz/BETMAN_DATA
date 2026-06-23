@@ -38,9 +38,10 @@ discovery-dev: ## Run Discovery service locally
 	cd $(DISCOVERY_DIR) && python -m app.main
 
 # ── Database ──────────────────────────────────────────────────────────────────
-migrate: ## Apply all migrations (001 + 002) to the target DB
+migrate: ## Apply all migrations (001 + 002 + 003) to the target DB
 	psql "$(DB_URL)" -f $(MIGRATION_DIR)/001_initial_schema.sql
 	psql "$(DB_URL)" -f $(MIGRATION_DIR)/002_intelligence_layers.sql
+	psql "$(DB_URL)" -f $(MIGRATION_DIR)/003_pedigree_and_providers.sql
 
 migrate-001: ## Apply only the initial schema migration
 	psql "$(DB_URL)" -f $(MIGRATION_DIR)/001_initial_schema.sql

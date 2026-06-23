@@ -69,6 +69,22 @@ Get a single feed with recent session info.
 
 ---
 
+## 2.5 Stats
+
+### `GET /stats/overview`
+
+Warehouse-level KPI payload for the Data Viewer overview tab.
+
+Returns:
+
+- total database size
+- per-table approximate row counts and storage sizes
+- key entity counts (meetings, races, runners, entries, odds snapshots)
+- freshness markers (`latest_odds_snapshot`, `latest_weather_reading`, `latest_media_segment`, `latest_meeting_date`)
+- 24h ingestion counts for high-volume tables
+
+---
+
 ## 3. Races
 
 ### `GET /races`
@@ -248,6 +264,16 @@ Chart-ready time-series odds data for a single runner or all runners.
   ]
 }
 ```
+
+### `GET /meetings?date=YYYY-MM-DD`
+
+Returns meetings grouped by track with race counts and embedded races for the
+requested date.
+
+### `GET /races/{id}/odds-analysis`
+
+Returns pre-computed odds analytics plus the most significant movement per
+runner from `odds_analytics` and `odds_movements`.
 
 ### `GET /races/{id}/excitement`
 
@@ -441,6 +467,71 @@ Curated clip sequence for a race — the key moments as short video references.
 ```
 
 ---
+
+## Analytics
+
+### `GET /analytics/trainer-win-rates`
+### `GET /analytics/jockey-win-rates`
+
+On-demand performance calculations from `race_entries`, `races`, and
+`meetings`.
+
+Supported filters:
+
+- `track`
+- `surface`
+- `condition_category`
+- `distance_min` / `distance_max`
+- `race_class_group`
+- `date_from` / `date_to`
+- `min_runners`
+- `order_by` (`win_rate`, `place_rate`, `roi`, `runners`)
+- `group_by` (`track`, `barrier`)
+
+Each row includes:
+
+- runners
+- wins
+- places
+- win rate
+- place rate
+- ROI where SP / closing price data is available
+
+---
+
+## Assistant
+
+### `POST /assistant/query`
+
+Natural-language exact search endpoint for the Data Viewer.
+
+Request:
+
+```json
+{
+  "question": "best jockeys at Flemington on soft tracks in the last 180 days"
+}
+```
+
+Response includes:
+
+- generated SQL
+- bound parameters
+- result rows
+- natural-language summary
+- confidence
+- suggested chart spec
+
+The query layer is guarded:
+
+- read-only execution
+- statement timeout
+- single-`SELECT` enforcement
+- allow-listed tables only
+- required `LIMIT`
+
+When no LLM key is configured, the endpoint falls back to deterministic
+rule-based parsing for common BETMAN warehouse queries.
 
 ## 4. Runners
 

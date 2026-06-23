@@ -12,20 +12,25 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.db import close_db_pool, create_db_pool
 from app.middleware import RequestLoggingMiddleware, TenantMiddleware
 from app.routers import (
     admin,
+    analytics,
+    assistant,
     discovery,
     events,
     feeds,
     health,
     intelligence,
     market,
+    meetings,
     pedigree,
     races,
     runners,
     search,
     skins,
+    stats,
     tracks,
 )
 
@@ -35,10 +40,10 @@ log = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("betman_api.starting", version=settings.api_version, env=settings.environment)
-    # TODO: initialise DB connection pool, Redis pub/sub listener
+    app.state.db_pool = await create_db_pool()
     yield
     log.info("betman_api.stopping")
-    # TODO: close DB pool, close Redis
+    await close_db_pool(getattr(app.state, "db_pool", None))
 
 
 app = FastAPI(
@@ -72,6 +77,8 @@ app.add_middleware(TenantMiddleware)
 PREFIX = "/v1"
 
 app.include_router(health.router,       prefix=PREFIX)
+app.include_router(stats.router,        prefix=PREFIX)
+app.include_router(meetings.router,     prefix=PREFIX)
 app.include_router(feeds.router,        prefix=PREFIX)
 app.include_router(races.router,        prefix=PREFIX)
 app.include_router(runners.router,      prefix=PREFIX)
@@ -83,4 +90,6 @@ app.include_router(intelligence.router, prefix=PREFIX)
 app.include_router(pedigree.router,     prefix=PREFIX)
 app.include_router(market.router,       prefix=PREFIX)
 app.include_router(discovery.router,    prefix=PREFIX)
+app.include_router(analytics.router,    prefix=PREFIX)
+app.include_router(assistant.router,    prefix=PREFIX)
 app.include_router(admin.router,        prefix=PREFIX)

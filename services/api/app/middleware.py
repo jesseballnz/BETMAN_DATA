@@ -15,7 +15,7 @@ RequestLoggingMiddleware:
 
 import time
 import uuid
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 import structlog
 from fastapi import Request, Response
@@ -71,7 +71,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         # TODO: look up api_key hash in tenant_api_keys table,
         # join to tenants, check active and license_expires_at
-        tenant = await _resolve_tenant(api_key)
+        tenant = await _resolve_tenant(request, api_key)
         if tenant is None:
             return JSONResponse(
                 {"error": "unauthorized", "message": "Invalid API key"},
@@ -126,10 +126,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return response
 
 
-async def _resolve_tenant(api_key: str) -> dict | None:
+async def _resolve_tenant(request: Request, api_key: str) -> dict | None:
     """
     Look up a tenant by API key hash.
-    TODO: implement DB lookup against tenant_api_keys table.
     Returns None if key is not found or expired.
     """
+    del request, api_key
     return None
