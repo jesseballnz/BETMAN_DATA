@@ -23,6 +23,7 @@ from app.config import settings
 from app.feed_manager import FeedManager
 from app.odds_adapter import OddsAdapter
 from app.race_adapter import RaceAdapter
+from app.pedigree_adapter import PedigreeAdapter
 from app.segment_router import SegmentRouter
 from app.state import StateManager
 from app.tenant_router import TenantRouter
@@ -50,6 +51,7 @@ async def main() -> None:
         storage_base=settings.storage_base_path,
     )
     race_adapter = RaceAdapter(state=state, db_url=settings.database_url)
+    pedigree_adapter = PedigreeAdapter(db_url=settings.database_url)
     odds_adapter = OddsAdapter(state=state, db_url=settings.database_url)
     weather_adapter = WeatherAdapter(state=state, db_url=settings.database_url)
 
@@ -68,6 +70,7 @@ async def main() -> None:
         await asyncio.gather(
             feed_manager.run(stop_event),
             race_adapter.run(stop_event),
+            pedigree_adapter.run(stop_event),
             odds_adapter.run(stop_event),
             weather_adapter.run(stop_event),
         )

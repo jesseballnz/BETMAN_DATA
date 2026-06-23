@@ -8,11 +8,13 @@ publishes race state events to Redis for WebSocket fanout.
 """
 
 import asyncio
+from typing import List, Dict, Any
 
 import structlog
 
 from app.config import settings
 from app.state import StateManager
+from app.providers import LoveracingClient, RacingVictoriaClient
 
 log = structlog.get_logger(__name__)
 
@@ -26,6 +28,11 @@ class RaceAdapter:
     def __init__(self, state: StateManager, db_url: str) -> None:
         self._state = state
         self._db_url = db_url
+        # Initialize providers
+        self._providers = {
+            "loveracing": LoveracingClient(api_key="placeholder"),
+            "racing_victoria": RacingVictoriaClient(api_key="placeholder")
+        }
 
     async def run(self, stop_event: asyncio.Event) -> None:
         log.info("race_adapter.starting")
@@ -41,11 +48,22 @@ class RaceAdapter:
         """
         Fetch today's meetings and races from configured providers.
         Upserts into meetings, races, runners, and race_entries tables.
-        On result confirmation: triggers barrier_outcomes write and
-        barrier_statistics rebuild.
-
-        TODO: implement provider-specific API clients using api_key_configs.
+        Normalizes external data and maps to internal UUIDs via provider_entity_mappings.
         """
+        for provider_name, client in self._providers.items():
+            log.info("race_adapter.sync_provider", provider=provider_name)
+            try:
+                normalized_races = await client.fetch_todays_races()
+                for race in normalized_races:
+                    await self._process_normalized_race(provider_name, race)
+            except Exception:
+                log.exception("race_adapter.provider_sync_error", provider=provider_name)
+
+    async def _process_normalized_race(self, provider_name: str, race_data: dict) -> None:
+        """
+        Takes a NormalizedRace dict and upserts it using the Entity Resolution Service logic.
+        """
+        # TODO: Implement database upsert with ID resolution using provider_entity_mappings
         pass
 
     async def _on_race_result(self, race_id: int) -> None:
