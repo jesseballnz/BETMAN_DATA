@@ -47,7 +47,61 @@ BETMAN_DATA is built in five layers:
 
 ---
 
-## Layer 1 — Feed Ingestion
+## Layer 1 — The Consumer: Nerve Centre
+
+**Service:** `services/consumer/`
+
+The Consumer is the single gateway for all live external data flowing into BETMAN_DATA. Nothing from the outside world enters the platform without passing through the Consumer. It runs as a long-lived async process with multiple concurrent adapters:
+
+```
+[External World]
+  Trackside HLS  ·  Race Data APIs  ·  Odds Feeds  ·  WeatherLink
+          │
+          ▼
+  ┌─────────────────────────────────────────────────────┐
+  │               CONSUMER SERVICE                      │
+  │  FeedManager   RaceAdapter   OddsAdapter            │
+  │  WeatherAdapter              TenantRouter           │
+  │  SegmentRouter   StateManager (Redis)               │
+  └─────────────────────────────────────────────────────┘
+          │                    │
+          ▼                    ▼
+  [Object Storage]      [Task Queue]
+  Raw segments          OCR · Audio · Ingest workers
+```
+
+### FeedManager
+
+Polls Trackside 1 and Trackside 2 HLS playlists (and any tenant-configured custom stream URLs), downloads new segments, stores them to object storage, and dispatches `segment_stored` events. Tenant feed licensing is applied at dispatch time via the TenantRouter — a segment from Feed 1 is only processed for tenants licensed for Feed 1.
+
+### RaceAdapter
+
+Polls external race data APIs (TAB NZ, Racing Australia, etc.) and upserts `meetings`, `races`, `runners`, and `race_entries` into the warehouse.
+
+### OddsAdapter
+
+Consumes pricing data from odds providers, writes `odds_snapshots`, and detects significant movements (steaming, drifting, blowouts) which are written to `odds_movements` and published to Redis for WebSocket fanout. Market suspension events are also used as race-start signals.
+
+### WeatherAdapter
+
+Polls the WeatherLink API for each configured weather station at a track. Writes `weather_readings` and `soil_moisture_readings`. Calculates a rolling soil moisture average and publishes track condition updates that feed directly into the barrier analysis pipeline. API keys for WeatherLink (and other external services) are stored in `api_key_configs` with encryption at rest.
+
+### TenantRouter
+
+The routing brain. When a segment arrives from Feed X, TenantRouter resolves which tenants are licensed for that feed (including any custom URL overrides). Only licensed tenants receive downstream processing events. Cache-backed by Redis with TTL; invalidated via admin API webhook on license changes.
+
+### StateManager
+
+Redis-backed live state of the entire platform:
+- Which feeds are active and healthy
+- Which races are currently live
+- Current excitement score per feed
+- Segment processing backlog depth
+- Current weather readings per station
+
+---
+
+## Layer 2 — Feed Ingestion
 
 **Service:** `services/ingest/`
 
@@ -184,6 +238,40 @@ For each race, runner, and significant audio window, we generate vector embeddin
 - **Commentary pattern detection** — find races where the commentary structure matched "dominated wire-to-wire"
 
 Stored in `runner_embeddings` using [pgvector](https://github.com/pgvector/pgvector).
+
+---
+
+## Layer 3c — Barrier Analysis Pipeline
+
+After race results are confirmed, a dedicated analytics pass builds the barrier intelligence layer:
+
+1. Read the confirmed race result (final positions, margins) from `race_entries`.
+2. Join to `track_condition_readings` for the condition code at race time.
+3. Join to `weather_readings` for temperature, humidity, and rainfall snapshot.
+4. Join to `soil_moisture_readings` for track moisture levels at race time.
+5. Write one `barrier_outcomes` row per entry — the core append-only record linking barrier, result, and conditions.
+6. Recompute `barrier_statistics` aggregations for the affected track/condition/distance band.
+7. Recompute `track_heatmap_cells` for spatial visualisation.
+
+Over time this builds a comprehensive, self-improving map: every race, every track, every condition. Query examples:
+- "Most winning barriers on a Heavy 10 at Ellerslie over 1400m in the last 3 years"
+- "Win rate from barriers 1–3 vs 4–8 on soft ground at Trentham for handicaps"
+- "Correlation between soil moisture > 40% and inside draw advantage"
+
+---
+
+## Layer 3d — Odds Intelligence Pipeline
+
+Every `odds_snapshot` is post-processed by the OddsMovementDetector:
+
+1. Compare each new snapshot to the previous snapshot for the same entry.
+2. Calculate movement percentage and direction.
+3. Flag significant movements: **steam** (rapid firming), **drift** (rapid lengthening), **blowout** (extreme drift), **late firm** (firming in final minutes).
+4. Write `odds_movements` records.
+5. Aggregate into `odds_analytics` per race entry.
+6. Publish notable movements to Redis for WebSocket broadcast.
+
+The goal: find the theory in the chaos. Sharp money movement, syndicate steaming, stable confidence — all visible in the data.
 
 ---
 

@@ -9,8 +9,12 @@ BETMAN_DATA is the data stack for the **BETMAN** platform. It ingests live racin
 | Capability | Description |
 |---|---|
 | **Licensing** | License the platform to any betting or content provider with isolated tenancy and full branding control |
-| **Skin Engine** | Multi-tenant branding — per-licensee colors, logos, sponsor slots, and ad placements with an admin interface |
+| **Skin Engine** | Multi-tenant branding — per-licensee colors, logos, sponsor slots, ad placements, and custom video/audio feeds |
 | **HLS Ingestion** | Consume Trackside 1 and Trackside 2 live HLS streams, segment and store raw media |
+| **Consumer Service** | The nerve centre — single gateway for all live data: HLS feeds, race data, odds, and weather |
+| **Barrier Analysis** | Track every winner/place-getter's gate across every track, condition, and surface — query "best barrier on a heavy 10 at Ellerslie over 1400m" |
+| **Track Science** | WeatherLink API integration — temperature, humidity, multi-probe soil moisture, track conditions — feeds directly into barrier analysis |
+| **Odds Intelligence** | Record every odds movement before a race, detect steaming, drifting, and market signals — find the theory in the chaos |
 | **Media Storage** | Tiered object storage for raw segments, compressed clips, audio chunks, and keyframes |
 | **OCR** | Extract text overlays from video frames — race numbers, runner names, odds, lower-thirds, tote boards |
 | **Audio Intelligence** | VAD, commentary vs. ad classification, ASR transcription, race-event detection |
@@ -37,24 +41,39 @@ BETMAN_DATA/
 │   ├── api/                     # FastAPI internal API service
 │   │   ├── app/
 │   │   │   ├── __init__.py
-│   │   │   ├── main.py          # App entrypoint
-│   │   │   ├── config.py        # Settings / environment config
+│   │   │   ├── main.py
+│   │   │   ├── config.py
+│   │   │   ├── middleware.py    # Tenant auth, request logging, usage tracking
 │   │   │   └── routers/
-│   │   │       ├── __init__.py
 │   │   │       ├── health.py
 │   │   │       ├── feeds.py
-│   │   │       ├── races.py     # includes /replay, /story, /excitement, /odds-drift
+│   │   │       ├── races.py     # replay, story, excitement, odds-drift, barriers
 │   │   │       ├── runners.py
+│   │   │       ├── tracks.py    # barrier analysis, heatmap, weather, conditions
 │   │   │       ├── events.py
-│   │   │       ├── search.py    # OCR, transcript, similarity search
-│   │   │       ├── skins.py     # Public skin resolution for licensees
-│   │   │       └── admin.py     # Admin: tenants, skins, assets, ad slots
+│   │   │       ├── search.py
+│   │   │       ├── skins.py     # includes tenant feed resolution
+│   │   │       └── admin.py     # tenants, skins, feeds, weather stations, API keys
+│   │   ├── pyproject.toml
+│   │   └── README.md
+│   │
+│   ├── consumer/                # THE NERVE CENTRE — live data gateway
+│   │   ├── app/
+│   │   │   ├── main.py          # Orchestrates all adapters
+│   │   │   ├── config.py
+│   │   │   ├── state.py         # Redis-backed live platform state
+│   │   │   ├── feed_manager.py  # HLS polling + segment download
+│   │   │   ├── race_adapter.py  # External race data feeds
+│   │   │   ├── odds_adapter.py  # External odds/pricing feeds
+│   │   │   ├── weather_adapter.py # WeatherLink API + soil probes
+│   │   │   ├── tenant_router.py # Routes data by tenant feed licensing
+│   │   │   └── segment_router.py # Dispatches to processing queues
 │   │   ├── pyproject.toml
 │   │   └── README.md
 │   │
 │   ├── ingest/                  # HLS ingestion worker (placeholder)
-│   ├── audio-worker/            # Audio extraction + classification worker (placeholder)
-│   └── ocr-worker/              # Frame extraction + OCR worker (placeholder)
+│   ├── audio-worker/            # Audio extraction + classification (placeholder)
+│   └── ocr-worker/              # Frame extraction + OCR (placeholder)
 │
 ├── libs/                        # Shared internal libraries (placeholder)
 │   ├── db/                      # DB session / ORM helpers

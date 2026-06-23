@@ -797,7 +797,284 @@ Clients receive JSON messages as events are detected:
 
 ---
 
-## Error Responses
+## 10. Tracks — Barrier Analysis, Weather & Conditions
+
+### `GET /tracks/{track_name}/barriers`
+
+Barrier win/place statistics for a track, filterable by condition, surface, distance, and race class.
+
+**Query parameters:**
+
+| Param | Type | Description |
+|---|---|---|
+| `condition` | `string` | Exact code: `H10`, `S6`, `G4`, etc. |
+| `condition_category` | `string` | `heavy`, `soft`, `good`, `firm` |
+| `surface` | `string` | `turf`, `synthetic` |
+| `distance_min` | `integer` | Min distance metres |
+| `distance_max` | `integer` | Max distance metres |
+| `race_class_group` | `string` | `group`, `handicap`, `maiden`, etc. |
+| `field_size_min` | `integer` | Min field size |
+| `since` | `date` | Only include races from this date |
+
+**Response `200`:**
+```json
+{
+  "track_name": "Ellerslie",
+  "surface": "turf",
+  "filters": {
+    "condition_code": "H10",
+    "distance_band": "1400-1600",
+    "since": "2021-01-01"
+  },
+  "sample_size": 847,
+  "barriers": [
+    {
+      "barrier_number": 1,
+      "relative_barrier": "inside_third",
+      "total_runners": 71,
+      "wins": 14,
+      "places": 29,
+      "win_rate": 0.197,
+      "place_rate": 0.408,
+      "avg_win_price": 4.20,
+      "rank_by_win_rate": 1
+    },
+    {
+      "barrier_number": 2,
+      "relative_barrier": "inside_third",
+      "total_runners": 68,
+      "wins": 11,
+      "places": 24,
+      "win_rate": 0.162,
+      "place_rate": 0.353,
+      "avg_win_price": 5.10,
+      "rank_by_win_rate": 2
+    }
+  ]
+}
+```
+
+### `GET /tracks/{track_name}/heatmap`
+
+Spatial heat map data — intensity values per track zone and condition, ready to render over a track diagram.
+
+**Query parameters:** `condition_category`, `surface`, `distance_band`.
+
+**Response `200`:**
+```json
+{
+  "track_name": "Ellerslie",
+  "condition_category": "heavy",
+  "cells": [
+    {"zone": "rail",    "distance_from_finish_band": "0-200",   "win_rate": 0.24, "intensity": 1.0},
+    {"zone": "inside",  "distance_from_finish_band": "0-200",   "win_rate": 0.19, "intensity": 0.79},
+    {"zone": "middle",  "distance_from_finish_band": "0-200",   "win_rate": 0.14, "intensity": 0.58},
+    {"zone": "outside", "distance_from_finish_band": "0-200",   "win_rate": 0.08, "intensity": 0.33}
+  ]
+}
+```
+
+### `GET /tracks/{track_name}/conditions`
+
+Current and recent track condition readings.
+
+**Response `200`:**
+```json
+{
+  "track_name": "Ellerslie",
+  "current_condition": {
+    "condition_code": "H10",
+    "condition_category": "heavy",
+    "penetrometer_value": 3.8,
+    "recorded_at": "2024-03-09T07:00:00Z",
+    "source": "official"
+  },
+  "recent_readings": [
+    {"recorded_at": "2024-03-09T07:00:00Z", "condition_code": "H10", "penetrometer_value": 3.8},
+    {"recorded_at": "2024-03-08T18:00:00Z", "condition_code": "H9",  "penetrometer_value": 4.1}
+  ]
+}
+```
+
+### `GET /tracks/{track_name}/weather`
+
+Live and historical weather data for a track's WeatherLink station.
+
+**Query parameters:** `since` (ISO 8601), `resolution` (`raw`, `hourly`, `daily`).
+
+**Response `200`:**
+```json
+{
+  "track_name": "Ellerslie",
+  "station_label": "Ellerslie Main Station",
+  "current": {
+    "recorded_at": "2024-03-09T08:45:00Z",
+    "temperature_c": 14.2,
+    "humidity_pct": 91.0,
+    "wind_speed_kmh": 18.0,
+    "wind_direction_deg": 225,
+    "rainfall_1h_mm": 4.2,
+    "rainfall_24h_mm": 38.6,
+    "barometric_pressure_hpa": 1008.2
+  },
+  "soil_moisture": [
+    {"probe_label": "rail_100m",    "zone": "rail",    "moisture_pct": 52.3},
+    {"probe_label": "centre_400m",  "zone": "centre",  "moisture_pct": 47.1},
+    {"probe_label": "outside_800m", "zone": "outside", "moisture_pct": 44.8}
+  ],
+  "history": []
+}
+```
+
+### `GET /races/{id}/barrier-context`
+
+For a specific race: show each entry's barrier alongside current barrier statistics for this track/condition. Useful for pre-race analysis UI.
+
+**Response `200`:**
+```json
+{
+  "race_id": 42,
+  "track_name": "Ellerslie",
+  "condition_code": "H10",
+  "entries": [
+    {
+      "saddle_cloth": "5",
+      "runner_name": "Rocket Man",
+      "barrier_number": 5,
+      "field_size": 14,
+      "relative_barrier": "middle_third",
+      "barrier_stats": {
+        "win_rate": 0.14,
+        "place_rate": 0.32,
+        "sample_size": 68,
+        "rank_by_win_rate": 6
+      }
+    }
+  ]
+}
+```
+
+---
+
+## 11. Odds Intelligence
+
+### `GET /races/{id}/odds-analysis`
+
+Full odds movement analysis for a race — the complete picture of market behaviour from open to suspension.
+
+**Response `200`:**
+```json
+{
+  "race_id": 42,
+  "race_name": "Auckland Cup",
+  "scheduled_start_time": "2024-03-09T03:30:00Z",
+  "entries": [
+    {
+      "race_entry_id": 201,
+      "runner_name": "Rocket Man",
+      "saddle_cloth": "5",
+      "opening_price": 4.20,
+      "closing_price": 2.80,
+      "min_price": 2.80,
+      "max_price": 4.20,
+      "total_movement_pct": -33.3,
+      "steam_detected": true,
+      "blowout_detected": false,
+      "firmings_count": 8,
+      "driftings_count": 1,
+      "biggest_move": {"type": "steam", "pct": -18.5, "detected_at": "2024-03-09T03:20:00Z", "time_to_jump_s": 600}
+    }
+  ],
+  "notable_movements": [
+    {
+      "runner_name": "Rocket Man",
+      "saddle_cloth": "5",
+      "type": "steam",
+      "from_price": 3.80,
+      "to_price": 2.80,
+      "movement_pct": -26.3,
+      "detected_at": "2024-03-09T03:20:00Z",
+      "time_to_jump_s": 600
+    }
+  ]
+}
+```
+
+### `GET /races/{id}/odds-timeline`
+
+Chart-ready time series of all odds snapshots for all entries from market open to suspension. Ideal for rendering an animated odds drift visualisation.
+
+---
+
+## 12. Admin — WeatherLink & API Keys
+
+> Admin routes prefixed `/admin/`, require elevated API key.
+
+### Weather Stations
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/admin/weather-stations` | List all weather stations |
+| `POST` | `/admin/weather-stations` | Add a weather station |
+| `GET` | `/admin/weather-stations/{id}` | Get station detail + probe list |
+| `PATCH` | `/admin/weather-stations/{id}` | Update station config |
+| `DELETE` | `/admin/weather-stations/{id}` | Deactivate station |
+| `GET` | `/admin/weather-stations/{id}/probes` | List soil moisture probes |
+| `POST` | `/admin/weather-stations/{id}/probes` | Add a probe |
+| `PATCH` | `/admin/weather-stations/{id}/probes/{probe_id}` | Update probe metadata |
+
+**`POST /admin/weather-stations` body:**
+```json
+{
+  "track_name": "Ellerslie",
+  "station_id": "119061",
+  "api_key_config_id": 3,
+  "label": "Ellerslie Main Station",
+  "latitude": -36.8729,
+  "longitude": 174.8156,
+  "elevation_m": 14
+}
+```
+
+### External API Keys
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/admin/api-keys` | List configured integrations (keys redacted) |
+| `POST` | `/admin/api-keys` | Add an API key config |
+| `PATCH` | `/admin/api-keys/{id}` | Update key or endpoint |
+| `DELETE` | `/admin/api-keys/{id}` | Deactivate key |
+| `POST` | `/admin/api-keys/{id}/test` | Test connectivity to the external service |
+
+**`POST /admin/api-keys` body:**
+```json
+{
+  "service_name": "weatherlink",
+  "key_name": "WeatherLink Ellerslie",
+  "api_key": "wl_live_XXXX",
+  "endpoint_url": "https://api.weatherlink.com/v2",
+  "extra_config_json": {"station_id": "119061"}
+}
+```
+
+### Tenant Feed Assignment
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/admin/tenants/{id}/feeds` | List feeds assigned to a tenant |
+| `POST` | `/admin/tenants/{id}/feeds` | Assign a feed to a tenant |
+| `PATCH` | `/admin/tenants/{id}/feeds/{feed_id}` | Update feed config (override URL, quality) |
+| `DELETE` | `/admin/tenants/{id}/feeds/{feed_id}` | Remove feed from tenant |
+
+**`POST /admin/tenants/{id}/feeds` body:**
+```json
+{
+  "feed_id": 1,
+  "override_url": "https://private-stream.racingcom.co.nz/trackside1/master.m3u8",
+  "quality_preference": "high"
+}
+```
+
 
 ```json
 {

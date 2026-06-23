@@ -598,7 +598,315 @@ An ad creative assigned to a slot within a skin for a time window.
 
 ---
 
-## Updated Key Relationships
+## Domain 5 — Skin Engine (continued)
+
+### `tenant_feeds`
+
+Links tenants to the feeds they are licensed to access. A tenant may override the default feed URL (e.g., a private higher-quality stream) and specify a quality preference.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `tenant_id` | `integer FK → tenants NOT NULL` | |
+| `feed_id` | `integer FK → feeds NOT NULL` | |
+| `override_url` | `text` | Custom HLS URL for this tenant (e.g., private stream) |
+| `quality_preference` | `text DEFAULT 'auto'` | `auto`, `high`, `medium`, `low` |
+| `active` | `boolean DEFAULT true` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+## Domain 6 — Track Conditions & Weather
+
+### `api_key_configs`
+
+Secure configuration for all external API integrations. Keys are encrypted at rest; the application decrypts at runtime using the platform master key.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `service_name` | `text NOT NULL` | `weatherlink`, `tab_nz`, `racing_australia`, `odds_provider`, `sportsbet` |
+| `key_name` | `text NOT NULL` | Human label, e.g. `WeatherLink Ellerslie Station` |
+| `encrypted_key` | `text NOT NULL` | AES-256 encrypted API key |
+| `endpoint_url` | `text` | Base URL for the service |
+| `extra_config_json` | `jsonb` | Service-specific config (station IDs, account IDs, etc.) |
+| `active` | `boolean DEFAULT true` | |
+| `created_at` | `timestamptz` | |
+| `updated_at` | `timestamptz` | |
+
+---
+
+### `weather_stations`
+
+A WeatherLink (or compatible) weather station installed at a track.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `track_name` | `text NOT NULL` | Must match `meetings.track_name` |
+| `station_id` | `text NOT NULL` | WeatherLink station identifier |
+| `api_key_config_id` | `integer FK → api_key_configs` | |
+| `label` | `text` | e.g. `Ellerslie Main Station` |
+| `latitude` | `double precision` | |
+| `longitude` | `double precision` | |
+| `elevation_m` | `real` | |
+| `active` | `boolean DEFAULT true` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `soil_moisture_probes`
+
+Individual soil moisture sensors positioned around the track (rail, centre, outside, etc. at various distances).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `station_id` | `integer FK → weather_stations NOT NULL` | |
+| `probe_label` | `text NOT NULL` | e.g. `rail_100m`, `centre_400m`, `outside_800m` |
+| `position_description` | `text` | Human description of placement |
+| `depth_mm` | `integer` | Depth of sensor in soil (mm) |
+| `distance_from_finish_m` | `integer` | Position along track |
+| `zone` | `text` | `rail`, `inside`, `centre`, `outside` |
+| `latitude` | `double precision` | |
+| `longitude` | `double precision` | |
+| `active` | `boolean DEFAULT true` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `weather_readings`
+
+Time-series weather observations from a station. Written continuously by the WeatherAdapter in the Consumer service.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `bigserial PK` | |
+| `station_id` | `integer FK → weather_stations NOT NULL` | |
+| `recorded_at` | `timestamptz NOT NULL` | |
+| `temperature_c` | `real` | Air temperature |
+| `humidity_pct` | `real` | Relative humidity 0–100 |
+| `wind_speed_kmh` | `real` | |
+| `wind_gust_kmh` | `real` | |
+| `wind_direction_deg` | `smallint` | 0–359 |
+| `rainfall_mm` | `real` | Rainfall in reading interval |
+| `rainfall_1h_mm` | `real` | Rolling 1-hour total |
+| `rainfall_24h_mm` | `real` | Rolling 24-hour total |
+| `barometric_pressure_hpa` | `real` | |
+| `uv_index` | `real` | |
+| `solar_radiation_wm2` | `real` | |
+| `dew_point_c` | `real` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `soil_moisture_readings`
+
+Time-series soil moisture measurements per probe. The multi-probe array paints a spatial picture of track moisture that directly feeds barrier analysis.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `bigserial PK` | |
+| `probe_id` | `integer FK → soil_moisture_probes NOT NULL` | |
+| `recorded_at` | `timestamptz NOT NULL` | |
+| `moisture_pct` | `real NOT NULL` | Volumetric water content % |
+| `soil_temperature_c` | `real` | |
+| `raw_value` | `real` | Raw sensor output (mV or Hz) for diagnostics |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `track_condition_readings`
+
+Official and estimated track condition ratings per meeting/race. Linked to weather and soil data at the time of reading.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `meeting_id` | `integer FK → meetings NOT NULL` | |
+| `race_id` | `integer FK → races` | Nullable — some ratings are per-meeting, not per-race |
+| `condition_code` | `text NOT NULL` | `H10`, `H9`, `H8`, `S7`, `S6`, `S5`, `G4`, `G3`, `G2`, `G1`, `F2`, `F1`, `ST` (synthetic) |
+| `condition_category` | `text NOT NULL` | `heavy`, `soft`, `good`, `firm`, `synthetic` |
+| `penetrometer_value` | `real` | Raw penetrometer reading in kg |
+| `recorded_at` | `timestamptz NOT NULL` | |
+| `source` | `text NOT NULL` | `official`, `stewards`, `estimated`, `weatherlink_derived` |
+| `weather_reading_id` | `integer FK → weather_readings` | Closest weather reading at this time |
+| `avg_soil_moisture_pct` | `real` | Average across all active probes at this time |
+| `notes` | `text` | e.g. `"Heavy overnight rain, rail moved 3m"` |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `track_maps`
+
+Spatial metadata about each track — shape, distances, zones. Enables spatial barrier heat maps.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `track_name` | `text NOT NULL` | |
+| `surface` | `text NOT NULL` | `turf`, `synthetic` |
+| `circumference_m` | `integer` | Track circumference in metres |
+| `straight_m` | `integer` | Home straight length |
+| `geometry_json` | `jsonb` | GeoJSON LineString/Polygon of the track outline |
+| `zones_json` | `jsonb` | Array of `{zone, from_finish_m, to_finish_m, label}` |
+| `created_at` | `timestamptz` | |
+
+---
+
+## Domain 7 — Barrier Analysis
+
+### `barrier_outcomes`
+
+The core append-only ledger. One row per race entry, written after results are confirmed. This is the raw material for all barrier intelligence.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `bigserial PK` | |
+| `race_id` | `integer FK → races NOT NULL` | |
+| `race_entry_id` | `integer FK → race_entries NOT NULL` | |
+| `runner_id` | `integer FK → runners NOT NULL` | |
+| `barrier_number` | `integer NOT NULL` | The drawn barrier |
+| `field_size` | `integer NOT NULL` | Total runners in the race |
+| `relative_barrier` | `text NOT NULL` | `inside_third`, `middle_third`, `outside_third` (normalised for field size) |
+| `final_position` | `integer NOT NULL` | |
+| `won` | `boolean NOT NULL` | |
+| `placed` | `boolean NOT NULL` | Top 3 (or as per race conditions) |
+| `unplaced` | `boolean NOT NULL` | |
+| `margin_lengths` | `real` | Lengths behind winner (0 if winner) |
+| `track_name` | `text NOT NULL` | Denormalised for fast querying |
+| `surface` | `text NOT NULL` | `turf`, `synthetic` |
+| `distance_m` | `integer NOT NULL` | |
+| `race_class_code` | `text` | |
+| `race_class_group` | `text` | |
+| `condition_code` | `text` | `H10`, `S6`, `G4`, etc. — from `track_condition_readings` |
+| `condition_category` | `text` | `heavy`, `soft`, `good`, `firm` |
+| `penetrometer_value` | `real` | At race time |
+| `avg_soil_moisture_pct` | `real` | Average track moisture at race time |
+| `temperature_c` | `real` | At race time |
+| `humidity_pct` | `real` | At race time |
+| `rainfall_24h_mm` | `real` | At race time |
+| `race_date` | `date NOT NULL` | Denormalised for fast time-range queries |
+| `created_at` | `timestamptz` | |
+
+**Query example:**
+```sql
+SELECT barrier_number, COUNT(*) FILTER (WHERE won) AS wins,
+       COUNT(*) AS runners,
+       ROUND(COUNT(*) FILTER (WHERE won)::numeric / COUNT(*) * 100, 1) AS win_pct
+FROM barrier_outcomes
+WHERE track_name = 'Ellerslie'
+  AND condition_code = 'H10'
+  AND surface = 'turf'
+  AND distance_m BETWEEN 1400 AND 1600
+  AND race_date >= CURRENT_DATE - INTERVAL '3 years'
+GROUP BY barrier_number
+ORDER BY win_pct DESC;
+```
+
+---
+
+### `barrier_statistics`
+
+Pre-computed aggregations for fast API queries. Rebuilt after each race result is confirmed.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `track_name` | `text NOT NULL` | |
+| `surface` | `text NOT NULL` | |
+| `distance_band` | `text NOT NULL` | `1000-1200`, `1200-1400`, `1400-1600`, `1600-2000`, `2000+` |
+| `condition_category` | `text NOT NULL` | `heavy`, `soft`, `good`, `firm` |
+| `condition_code` | `text` | Specific code e.g. `H10` — null means all codes in category |
+| `field_size_band` | `text NOT NULL` | `1-8`, `9-12`, `13-16`, `17+` |
+| `barrier_number` | `integer NOT NULL` | |
+| `relative_barrier` | `text NOT NULL` | `inside_third`, `middle_third`, `outside_third` |
+| `race_class_group` | `text` | Null = all classes |
+| `total_runners` | `integer NOT NULL` | Sample size |
+| `wins` | `integer NOT NULL` | |
+| `places` | `integer NOT NULL` | |
+| `win_rate` | `real NOT NULL` | |
+| `place_rate` | `real NOT NULL` | |
+| `avg_win_price` | `real` | Average winning dividend |
+| `updated_at` | `timestamptz NOT NULL` | |
+
+---
+
+### `track_heatmap_cells`
+
+Pre-computed spatial heat map data for visualisation. Each cell represents a zone of the track, the condition, and the barrier success rates. Drives the visual track map UI.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `track_name` | `text NOT NULL` | |
+| `surface` | `text NOT NULL` | |
+| `condition_category` | `text NOT NULL` | |
+| `distance_band` | `text NOT NULL` | |
+| `zone` | `text NOT NULL` | `rail`, `inside`, `middle`, `outside` |
+| `distance_from_finish_band` | `text` | `0-200`, `200-400`, `400-800`, `800+` |
+| `win_count` | `integer NOT NULL DEFAULT 0` | |
+| `place_count` | `integer NOT NULL DEFAULT 0` | |
+| `runner_count` | `integer NOT NULL DEFAULT 0` | |
+| `win_rate` | `real` | |
+| `place_rate` | `real` | |
+| `intensity` | `real` | Normalised 0–1 for heat map colour gradient |
+| `updated_at` | `timestamptz NOT NULL` | |
+
+---
+
+## Domain 8 — Odds Analytics
+
+### `odds_movements`
+
+Every detected significant odds movement. Written by the OddsMovementDetector in the Consumer service after comparing consecutive snapshots.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `bigserial PK` | |
+| `race_id` | `integer FK → races NOT NULL` | |
+| `race_entry_id` | `integer FK → race_entries NOT NULL` | |
+| `detected_at` | `timestamptz NOT NULL` | Wall-clock time of detection |
+| `time_to_jump_s` | `integer` | Seconds before scheduled start (negative = after start) |
+| `from_price` | `numeric NOT NULL` | Previous win price |
+| `to_price` | `numeric NOT NULL` | New win price |
+| `movement_pct` | `real NOT NULL` | % change (negative = firming, positive = drifting) |
+| `movement_type` | `text NOT NULL` | `steam` (rapid firm), `firm`, `drift`, `blowout` (extreme drift), `late_firm`, `market_open`, `market_suspend` |
+| `source` | `text NOT NULL` | `api_feed`, `ocr_tote` |
+| `created_at` | `timestamptz` | |
+
+**Movement type thresholds (configurable):**
+- `steam`: > 20% firming within 5 minutes
+- `firm`: 5–20% firming
+- `drift`: 5–20% lengthening
+- `blowout`: > 20% lengthening
+- `late_firm`: any firming within 10 minutes of jump
+
+---
+
+### `odds_analytics`
+
+Pre-computed per-entry odds summary for a race. Updated after each snapshot batch.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `race_id` | `integer FK → races NOT NULL` | |
+| `race_entry_id` | `integer FK → race_entries UNIQUE NOT NULL` | |
+| `opening_price` | `numeric` | First recorded price |
+| `closing_price` | `numeric` | Last price before market suspension |
+| `min_price` | `numeric` | Shortest price recorded |
+| `max_price` | `numeric` | Longest price recorded |
+| `price_range` | `real` | `max - min` |
+| `total_movement_pct` | `real` | Opening to closing % change |
+| `firmings_count` | `integer DEFAULT 0` | Number of firming movements detected |
+| `driftings_count` | `integer DEFAULT 0` | Number of drifting movements detected |
+| `steam_detected` | `boolean DEFAULT false` | True if a steam event was detected |
+| `blowout_detected` | `boolean DEFAULT false` | True if a blowout event was detected |
+| `biggest_move_pct` | `real` | Largest single movement % |
+| `biggest_move_type` | `text` | Type of biggest movement |
+| `snapshot_count` | `integer DEFAULT 0` | Total snapshots recorded |
+| `updated_at` | `timestamptz NOT NULL` | |
 
 ```
 tenants ──< skins ──< skin_contexts
