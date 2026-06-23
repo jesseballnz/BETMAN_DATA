@@ -19,6 +19,7 @@ class NormalizedRaceEntry(BaseModel):
     jockey_name: Optional[str] = None
     trainer_name: Optional[str] = None
     gear_changes: List[str] = Field(default_factory=list)
+    sectionals: Dict[str, float] = Field(default_factory=dict)
 
 class NormalizedRace(BaseModel):
     provider_id: str

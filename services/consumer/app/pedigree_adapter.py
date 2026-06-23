@@ -13,6 +13,8 @@ class PedigreeAdapter:
     Ingests stud book data (sire, dam, damsire) and populates the pedigrees table.
     Runs as a batch job.
     """
+    
+    SYNC_INTERVAL_SECONDS = 7 * 24 * 60 * 60  # Run once a week
 
     def __init__(self, db_url: str) -> None:
         self._db_url = db_url
@@ -24,8 +26,7 @@ class PedigreeAdapter:
                 await self._sync_pedigrees()
             except Exception:
                 log.exception("pedigree_adapter.sync_error")
-            # Run once a week (604800 seconds) or adjust as needed
-            await asyncio.sleep(604800)
+            await asyncio.sleep(self.SYNC_INTERVAL_SECONDS)
         log.info("pedigree_adapter.stopped")
 
     async def _sync_pedigrees(self) -> None:

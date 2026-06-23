@@ -8,10 +8,12 @@ publishes race state events to Redis for WebSocket fanout.
 """
 
 import asyncio
+import os
 from typing import List, Dict, Any
 
 import structlog
 
+from schemas import NormalizedRace
 from app.config import settings
 from app.state import StateManager
 from app.providers import LoveracingClient, RacingVictoriaClient
@@ -28,11 +30,19 @@ class RaceAdapter:
     def __init__(self, state: StateManager, db_url: str) -> None:
         self._state = state
         self._db_url = db_url
-        # Initialize providers
+
+        # Initialize providers (API keys loaded from env or fall back to empty for now)
         self._providers = {
-            "loveracing": LoveracingClient(api_key="placeholder"),
-            "racing_victoria": RacingVictoriaClient(api_key="placeholder")
+            "loveracing": LoveracingClient(api_key=self._get_api_key("loveracing", "LOVERACING_API_KEY")),
+            "racing_victoria": RacingVictoriaClient(api_key=self._get_api_key("racing_victoria", "RACING_VICTORIA_API_KEY"))
         }
+
+    def _get_api_key(self, provider_name: str, env_var: str) -> str:
+        key = os.getenv(env_var)
+        if not key:
+            log.warning("race_adapter.missing_api_key", provider=provider_name)
+            return ""
+        return key
 
     async def run(self, stop_event: asyncio.Event) -> None:
         log.info("race_adapter.starting")
@@ -59,9 +69,9 @@ class RaceAdapter:
             except Exception:
                 log.exception("race_adapter.provider_sync_error", provider=provider_name)
 
-    async def _process_normalized_race(self, provider_name: str, race_data: dict) -> None:
+    async def _process_normalized_race(self, provider_name: str, normalized_race: NormalizedRace) -> None:
         """
-        Takes a NormalizedRace dict and upserts it using the Entity Resolution Service logic.
+        Takes a NormalizedRace and upserts it using the Entity Resolution Service logic.
         """
         # TODO: Implement database upsert with ID resolution using provider_entity_mappings
         pass

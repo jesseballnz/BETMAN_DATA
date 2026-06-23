@@ -5,7 +5,7 @@ CREATE TABLE provider_entity_mappings (
     id SERIAL PRIMARY KEY,
     entity_type VARCHAR(50) NOT NULL, -- 'race', 'runner', 'jockey', 'trainer'
     internal_uuid UUID NOT NULL,
-    provider_name VARCHAR(50) NOT NULL, -- 'loveracing', 'racing_nsw', 'racing_australia'
+    provider_name VARCHAR(50) NOT NULL, -- 'loveracing', 'racing_victoria', 'racing_nsw', 'racing_australia'
     provider_entity_id VARCHAR(100) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
