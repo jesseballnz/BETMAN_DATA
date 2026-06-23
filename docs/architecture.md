@@ -224,7 +224,97 @@ See [api-spec.md](api-spec.md) for the full endpoint reference.
 
 ---
 
-## Technology Choices
+## Layer 6 — Skin Engine (Multi-Tenant Licensing)
+
+BETMAN_DATA is designed to be licensed to external betting operators and content providers — Racing.com, Ladbrokes, William Hill, and others. Each licensee gets a fully branded experience without any change to the underlying data platform.
+
+### Tenants
+
+Each licensee is a **tenant** in the system. A tenant has:
+- A unique `slug` used in API paths and asset namespacing
+- A license type (`full`, `content_only`, `odds_only`)
+- A license expiry date
+- One or more **skins**
+
+### Skins
+
+A **skin** is a named, versioned branding configuration owned by a tenant. It defines:
+- **Colors** — primary, secondary, accent, background, text
+- **Typography** — font family, heading weight
+- **Logos and assets** — main logo, dark-mode logo, favicon, sponsor watermarks
+- **Feature flags** — which platform features the tenant's users can access (commentary replay, race stories, similarity search, etc.)
+- **Layout options** — replay overlay style, excitement bar style, card layout
+
+A single tenant can have multiple skins (e.g., "Ladbrokes Dark", "Ladbrokes Light", "Ladbrokes G1 Premium"). Skins can be scoped by context — a tenant may show one skin for standard races and a premium-branded skin for Group 1 events.
+
+### Skin Contexts
+
+Skin selection is hierarchical and resolved at request time:
+
+```
+global tenant skin
+  → race class skin (e.g., all G1 races use the premium skin)
+    → meeting skin (e.g., Melbourne Cup carnival branding)
+      → race skin (e.g., a specific sponsored race)
+```
+
+The highest-priority matching context wins.
+
+### Advertising Slots
+
+The skin engine includes a structured ad slot system. **Ad slot types** define named positions within the UI (e.g., `replay_overlay_top`, `pre_race_banner`, `results_sidebar`, `race_card_footer`). Each slot has defined dimensions and a display context.
+
+**Ad placements** assign a creative asset to a slot for a skin within an active time window. The API resolves the active ad for any slot at query time.
+
+### Admin Interface
+
+The admin API (`/admin/`) provides full CRUD for:
+- Tenants (create, update, activate/deactivate)
+- Skins (create, configure, set as default)
+- Skin assets (upload logos, backgrounds, sponsor creatives)
+- Ad placements (assign ads to slots, set active windows)
+- Skin contexts (scope a skin to a race class, meeting, or race)
+
+This is the interface used by operators to set up a new licensee and configure their brand.
+
+### Skin Resolution (Public API)
+
+Front-ends resolve the active skin for a given context via:
+```
+GET /skins/{tenant_slug}?race_class=G1&meeting_id=42
+```
+
+This returns the fully resolved skin config — colors, logo URLs, feature flags, and active ad placements — ready to apply directly to a front-end renderer.
+
+---
+
+## Summary Architecture Diagram
+
+```
+[Trackside HLS Feeds]
+        │
+        ▼
+[Feed Ingestion]  ──→  [Object Storage]
+        │
+        ▼
+[Async Processing]
+  OCR · Audio · Scene Classification · Excitement Scoring · NER
+        │
+        ▼
+[Intelligence Layer]
+  Race Stories · Vector Embeddings · Event Predictions
+        │
+        ▼
+[PostgreSQL + pgvector]
+  Racing · Media · Signals · Odds · Skin Engine
+        │
+        ▼
+[BETMAN Data API  ·  Admin API  ·  WebSocket Live Stream]
+        │
+        ▼
+[Licensee Front-Ends — branded via Skin Engine]
+  Racing.com  ·  Ladbrokes  ·  William Hill  ·  ...
+```
 
 | Component | Technology | Rationale |
 |---|---|---|

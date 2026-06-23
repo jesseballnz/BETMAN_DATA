@@ -8,6 +8,8 @@ BETMAN_DATA is the data stack for the **BETMAN** platform. It ingests live racin
 
 | Capability | Description |
 |---|---|
+| **Licensing** | License the platform to any betting or content provider with isolated tenancy and full branding control |
+| **Skin Engine** | Multi-tenant branding — per-licensee colors, logos, sponsor slots, and ad placements with an admin interface |
 | **HLS Ingestion** | Consume Trackside 1 and Trackside 2 live HLS streams, segment and store raw media |
 | **Media Storage** | Tiered object storage for raw segments, compressed clips, audio chunks, and keyframes |
 | **OCR** | Extract text overlays from video frames — race numbers, runner names, odds, lower-thirds, tote boards |
@@ -41,9 +43,12 @@ BETMAN_DATA/
 │   │   │       ├── __init__.py
 │   │   │       ├── health.py
 │   │   │       ├── feeds.py
-│   │   │       ├── races.py
+│   │   │       ├── races.py     # includes /replay, /story, /excitement, /odds-drift
+│   │   │       ├── runners.py
 │   │   │       ├── events.py
-│   │   │       └── search.py
+│   │   │       ├── search.py    # OCR, transcript, similarity search
+│   │   │       ├── skins.py     # Public skin resolution for licensees
+│   │   │       └── admin.py     # Admin: tenants, skins, assets, ad slots
 │   │   ├── pyproject.toml
 │   │   └── README.md
 │   │
