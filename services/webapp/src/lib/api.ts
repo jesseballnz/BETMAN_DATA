@@ -94,6 +94,56 @@ export interface AssistantResponse {
   chart: { type: string; x?: string; y?: string }
 }
 
+export interface SearchResponse {
+  query: string
+  results: Array<Record<string, string | number | boolean | null>>
+}
+
+interface RaceQueryOptions {
+  date?: string
+  track?: string
+  race_class?: string
+  race_class_group?: string
+  status?: string
+  limit?: number
+  offset?: number
+}
+
+interface BarrierQueryOptions {
+  condition?: string
+  condition_category?: string
+  surface?: string
+  distance_min?: number
+  distance_max?: number
+  race_class_group?: string
+  field_size_min?: number
+  since?: string
+}
+
+interface HeatmapQueryOptions {
+  condition_category?: string
+  surface?: string
+  distance_band?: string
+}
+
+interface PeopleQueryOptions {
+  track?: string
+  limit?: number
+  min_runners?: number
+  order_by?: string
+  group_by?: string
+}
+
+function withQuery(path: string, query: Record<string, string | number | undefined>) {
+  const params = new URLSearchParams()
+  Object.entries(query).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return
+    params.set(key, String(value))
+  })
+  const queryString = params.toString()
+  return queryString ? `${path}?${queryString}` : path
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   headers.set('Content-Type', 'application/json')
@@ -112,7 +162,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   getStatsOverview: () => request<StatsOverview>('/stats/overview'),
   getMeetings: (date?: string) => request<MeetingsResponse>(`/meetings${date ? `?date=${date}` : ''}`),
-  getRaces: () => request<RaceListResponse>('/races'),
+  getRaces: (options: RaceQueryOptions = {}) =>
+    request<RaceListResponse>(
+      withQuery('/races', {
+        date: options.date,
+        track: options.track,
+        race_class: options.race_class,
+        race_class_group: options.race_class_group,
+        status: options.status,
+        limit: options.limit,
+        offset: options.offset,
+      }),
+    ),
   getRace: (raceId: number) => request<RaceDetail>(`/races/${raceId}`),
   getRaceOddsDrift: (raceId: number) => request<OddsResponse>(`/races/${raceId}/odds-drift`),
   getSteamers: () => request<SignalsResponseItem[]>('/market/steamers'),
@@ -120,9 +181,48 @@ export const api = {
   getSmartMoney: () => request<SignalsResponseItem[]>('/market/smart-money'),
   getDiscoveryPatterns: () => request<SignalsResponseItem[]>('/discovery/patterns'),
   getTracks: () => request<TracksResponse>('/tracks'),
-  getBarrierAnalysis: (trackName: string) => request<BarrierResponse>(`/tracks/${encodeURIComponent(trackName)}/barriers`),
-  getHeatmap: (trackName: string) => request<HeatmapResponse>(`/tracks/${encodeURIComponent(trackName)}/heatmap`),
-  getTrainerWinRates: (track?: string) => request<PeopleResponse>(`/analytics/trainer-win-rates${track ? `?track=${encodeURIComponent(track)}` : ''}`),
-  getJockeyWinRates: (track?: string) => request<PeopleResponse>(`/analytics/jockey-win-rates${track ? `?track=${encodeURIComponent(track)}` : ''}`),
+  getBarrierAnalysis: (trackName: string, options: BarrierQueryOptions = {}) =>
+    request<BarrierResponse>(
+      withQuery(`/tracks/${encodeURIComponent(trackName)}/barriers`, {
+        condition: options.condition,
+        condition_category: options.condition_category,
+        surface: options.surface,
+        distance_min: options.distance_min,
+        distance_max: options.distance_max,
+        race_class_group: options.race_class_group,
+        field_size_min: options.field_size_min,
+        since: options.since,
+      }),
+    ),
+  getHeatmap: (trackName: string, options: HeatmapQueryOptions = {}) =>
+    request<HeatmapResponse>(
+      withQuery(`/tracks/${encodeURIComponent(trackName)}/heatmap`, {
+        condition_category: options.condition_category,
+        surface: options.surface,
+        distance_band: options.distance_band,
+      }),
+    ),
+  getTrainerWinRates: (options: PeopleQueryOptions = {}) =>
+    request<PeopleResponse>(
+      withQuery('/analytics/trainer-win-rates', {
+        track: options.track,
+        limit: options.limit,
+        min_runners: options.min_runners,
+        order_by: options.order_by,
+        group_by: options.group_by,
+      }),
+    ),
+  getJockeyWinRates: (options: PeopleQueryOptions = {}) =>
+    request<PeopleResponse>(
+      withQuery('/analytics/jockey-win-rates', {
+        track: options.track,
+        limit: options.limit,
+        min_runners: options.min_runners,
+        order_by: options.order_by,
+        group_by: options.group_by,
+      }),
+    ),
   askBetman: (question: string) => request<AssistantResponse>('/assistant/query', { method: 'POST', body: JSON.stringify({ question }) }),
+  searchOcr: (query: string, limit = 20) => request<SearchResponse>(withQuery('/search/ocr', { q: query, limit })),
+  searchTranscripts: (query: string, limit = 20) => request<SearchResponse>(withQuery('/search/transcripts', { q: query, limit })),
 }
