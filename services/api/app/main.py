@@ -13,7 +13,21 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.middleware import RequestLoggingMiddleware, TenantMiddleware
-from app.routers import admin, events, feeds, health, races, runners, search, skins, tracks
+from app.routers import (
+    admin,
+    discovery,
+    events,
+    feeds,
+    health,
+    intelligence,
+    market,
+    pedigree,
+    races,
+    runners,
+    search,
+    skins,
+    tracks,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -56,12 +70,16 @@ app.add_middleware(TenantMiddleware)
 # ── Routers ───────────────────────────────────────────────────────────────────
 PREFIX = "/v1"
 
-app.include_router(health.router,   prefix=PREFIX)
-app.include_router(feeds.router,    prefix=PREFIX)
-app.include_router(races.router,    prefix=PREFIX)
-app.include_router(runners.router,  prefix=PREFIX)
-app.include_router(tracks.router,   prefix=PREFIX)
-app.include_router(events.router,   prefix=PREFIX)
-app.include_router(search.router,   prefix=PREFIX)
-app.include_router(skins.router,    prefix=PREFIX)
-app.include_router(admin.router,    prefix=PREFIX)
+app.include_router(health.router,       prefix=PREFIX)
+app.include_router(feeds.router,        prefix=PREFIX)
+app.include_router(races.router,        prefix=PREFIX)
+app.include_router(runners.router,      prefix=PREFIX)
+app.include_router(tracks.router,       prefix=PREFIX)
+app.include_router(events.router,       prefix=PREFIX)
+app.include_router(search.router,       prefix=PREFIX)
+app.include_router(skins.router,        prefix=PREFIX)
+app.include_router(intelligence.router, prefix=PREFIX)
+app.include_router(pedigree.router,     prefix=PREFIX)
+app.include_router(market.router,       prefix=PREFIX)
+app.include_router(discovery.router,    prefix=PREFIX)
+app.include_router(admin.router,        prefix=PREFIX)
