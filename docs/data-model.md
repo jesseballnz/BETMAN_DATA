@@ -1,0 +1,954 @@
+# BETMAN_DATA — Data Model
+
+This document describes the core entities, relationships, and design decisions for the BETMAN_DATA warehouse.
+
+---
+
+## Entity Domains
+
+The schema is organised into four domains:
+
+1. **Racing** — the canonical racing entities
+2. **Feed / Media** — raw and derived media assets
+3. **Signals / Observations** — extracted data from media (OCR, audio, events)
+4. **Market / Odds** — odds and pricing snapshots
+
+---
+
+## Domain 1 — Racing Entities
+
+### `race_classes`
+
+Normalises race class codes into a structured hierarchy. This table is the source of truth for filtering by class.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `code` | `text UNIQUE NOT NULL` | Display code: `G1`, `G2`, `G3`, `L`, `R75`, `MDN`, `BM65`, etc. |
+| `group` | `text NOT NULL` | Normalised group: `group`, `listed`, `rating_band`, `benchmark`, `maiden`, `open`, `age_restricted` |
+| `rank` | `integer` | Sortable hierarchy — lower = more prestigious |
+| `description` | `text` | Human-readable label |
+
+**Race class normalisation examples:**
+
+| Code | Group | Rank | Description |
+|---|---|---|---|
+| `G1` | `group` | 1 | Group 1 |
+| `G2` | `group` | 2 | Group 2 |
+| `G3` | `group` | 3 | Group 3 |
+| `L` | `listed` | 4 | Listed |
+| `R75` | `rating_band` | 50 | Rating 75+ handicap |
+| `BM65` | `benchmark` | 60 | Benchmark 65 |
+| `MDN` | `maiden` | 90 | Maiden |
+| `2YO` | `age_restricted` | 80 | Two-year-olds only |
+
+This design allows:
+- Exact filtering by code (`race_class_code = 'G1'`)
+- Group filtering (`race_class_group = 'group'`)
+- Ranked ordering (`ORDER BY race_class_rank`)
+
+---
+
+### `meetings`
+
+A race meeting at a specific track on a specific day.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `external_meeting_id` | `text` | Source system ID |
+| `track_name` | `text NOT NULL` | e.g. `Ellerslie`, `Trentham` |
+| `meeting_date` | `date NOT NULL` | |
+| `surface` | `text` | `turf`, `synthetic`, `harness`, `greyhound` |
+| `jurisdiction` | `text` | `NZ`, `AU`, etc. |
+| `status` | `text` | `scheduled`, `abandoned`, `completed` |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `races`
+
+An individual race within a meeting.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `meeting_id` | `integer FK → meetings` | |
+| `external_race_id` | `text` | Source system ID |
+| `race_number` | `integer NOT NULL` | Race number on the card |
+| `name` | `text` | Race name |
+| `distance_m` | `integer` | Distance in metres |
+| `scheduled_start_time` | `timestamptz` | |
+| `actual_start_time` | `timestamptz` | Populated when confirmed |
+| `race_class_id` | `integer FK → race_classes` | |
+| `race_class_code` | `text` | Denormalised for fast filtering |
+| `prize_money` | `numeric` | |
+| `surface` | `text` | Override if differs from meeting |
+| `status` | `text` | `scheduled`, `running`, `finished`, `abandoned` |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `runners`
+
+Individual horses, dogs, or harness drivers.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `external_runner_id` | `text` | Source system ID |
+| `name` | `text NOT NULL` | Runner name |
+| `type` | `text` | `thoroughbred`, `harness`, `greyhound` |
+| `country_of_origin` | `text` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `race_entries`
+
+Links runners to races (the race card / field).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `race_id` | `integer FK → races` | |
+| `runner_id` | `integer FK → runners` | |
+| `barrier_number` | `integer` | |
+| `saddle_cloth` | `text` | Display number |
+| `jockey_or_driver` | `text` | |
+| `trainer` | `text` | |
+| `weight_kg` | `numeric` | |
+| `scratched` | `boolean DEFAULT false` | |
+| `final_position` | `integer` | Populated post-race |
+| `created_at` | `timestamptz` | |
+
+---
+
+## Domain 2 — Feed / Media Entities
+
+### `feeds`
+
+Represents a named live media feed source.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `name` | `text NOT NULL` | e.g. `Trackside 1`, `Trackside 2` |
+| `url` | `text NOT NULL` | HLS master playlist URL |
+| `active` | `boolean DEFAULT true` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `stream_sessions`
+
+A continuous ingestion session for a feed (one session per startup).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `feed_id` | `integer FK → feeds` | |
+| `started_at` | `timestamptz NOT NULL` | |
+| `ended_at` | `timestamptz` | Null if still active |
+| `status` | `text` | `active`, `ended`, `error` |
+| `selected_rendition_url` | `text` | The chosen HLS variant URL |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `media_segments`
+
+Individual HLS `.ts` segments downloaded from a stream.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `feed_id` | `integer FK → feeds` | |
+| `stream_session_id` | `integer FK → stream_sessions` | |
+| `sequence_number` | `bigint NOT NULL` | HLS media sequence |
+| `segment_started_at` | `timestamptz NOT NULL` | Wall-clock start time |
+| `segment_ended_at` | `timestamptz NOT NULL` | Wall-clock end time |
+| `duration_ms` | `integer NOT NULL` | Segment duration in milliseconds |
+| `storage_uri` | `text NOT NULL` | Object storage path |
+| `content_hash` | `text` | SHA-256 of raw bytes |
+| `codec` | `text` | e.g. `h264` |
+| `resolution` | `text` | e.g. `1920x1080` |
+| `bitrate` | `integer` | Bits per second |
+| `audio_codec` | `text` | e.g. `aac` |
+| `processing_status` | `text DEFAULT 'pending'` | `pending`, `processing`, `done`, `error` |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `audio_chunks`
+
+Extracted audio windows from segments (may span multiple segments).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `segment_id` | `integer FK → media_segments` | |
+| `started_at` | `timestamptz NOT NULL` | |
+| `ended_at` | `timestamptz NOT NULL` | |
+| `duration_ms` | `integer NOT NULL` | |
+| `storage_uri` | `text NOT NULL` | |
+| `codec` | `text` | e.g. `opus`, `aac` |
+| `sample_rate` | `integer` | Hz |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `keyframes`
+
+Individual extracted frames from segments.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `segment_id` | `integer FK → media_segments` | |
+| `frame_timestamp` | `timestamptz NOT NULL` | Exact time of frame |
+| `offset_ms` | `integer NOT NULL` | Offset within segment |
+| `storage_uri` | `text NOT NULL` | |
+| `width` | `integer` | |
+| `height` | `integer` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `clips`
+
+Derived compressed video clips around high-value events.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `feed_id` | `integer FK → feeds` | |
+| `race_id` | `integer FK → races` | Nullable |
+| `clip_type` | `text` | `pre_start`, `barrier_load`, `race_live`, `finish`, `result`, `highlight` |
+| `started_at` | `timestamptz NOT NULL` | |
+| `ended_at` | `timestamptz NOT NULL` | |
+| `duration_ms` | `integer NOT NULL` | |
+| `storage_uri` | `text NOT NULL` | |
+| `codec` | `text` | |
+| `resolution` | `text` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+## Domain 3 — Signal / Observation Entities
+
+### `ocr_observations`
+
+Text extracted from video frames via OCR.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `segment_id` | `integer FK → media_segments` | |
+| `keyframe_id` | `integer FK → keyframes` | Nullable |
+| `frame_timestamp` | `timestamptz NOT NULL` | |
+| `detected_text` | `text NOT NULL` | Raw OCR output |
+| `normalized_text` | `text` | Cleaned/normalised version |
+| `observation_type` | `text` | `race_number`, `runner_name`, `odds`, `clock`, `lower_third`, `tote`, `unknown` |
+| `confidence` | `real` | 0–1 |
+| `bbox_json` | `jsonb` | Bounding box `{x, y, w, h}` |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `audio_events`
+
+Classified audio windows from the audio worker.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `segment_id` | `integer FK → media_segments` | |
+| `audio_chunk_id` | `integer FK → audio_chunks` | Nullable |
+| `started_at` | `timestamptz NOT NULL` | |
+| `ended_at` | `timestamptz NOT NULL` | |
+| `event_type` | `text NOT NULL` | `commentary`, `advertisement`, `parade_ring`, `pre_start_build`, `race_call`, `result_read`, `ambient`, `silence`, `unknown` |
+| `confidence` | `real` | 0–1 |
+| `model_version` | `text` | Model/version used |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `transcript_segments`
+
+ASR-transcribed speech from classified commentary windows.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `audio_event_id` | `integer FK → audio_events` | |
+| `started_at` | `timestamptz NOT NULL` | |
+| `ended_at` | `timestamptz NOT NULL` | |
+| `text` | `text NOT NULL` | Transcribed text |
+| `language` | `text DEFAULT 'en'` | |
+| `confidence` | `real` | |
+| `model_version` | `text` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `event_predictions`
+
+Model-derived predictions about race state, based on audio and visual signals.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `race_id` | `integer FK → races` | Nullable — may not yet be linked |
+| `feed_id` | `integer FK → feeds` | |
+| `event_type` | `text NOT NULL` | `parade_ring_started`, `barriers_loading`, `jump_imminent`, `race_live`, `finish_detected`, `result_announced` |
+| `predicted_at` | `timestamptz NOT NULL` | Wall-clock time of prediction |
+| `confidence` | `real` | |
+| `source_type` | `text` | `audio`, `ocr`, `combined` |
+| `source_ids` | `integer[]` | IDs of contributing observations |
+| `payload_json` | `jsonb` | Additional context |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `race_timeline_events`
+
+Canonical, resolved timeline events for a race (derived from predictions and confirmed signals).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `race_id` | `integer FK → races NOT NULL` | |
+| `event_type` | `text NOT NULL` | `scheduled_start`, `actual_start`, `finish`, `result_official`, `abandoned`, `scratching` |
+| `event_time` | `timestamptz NOT NULL` | |
+| `source_type` | `text` | `feed_data`, `ocr`, `audio`, `manual` |
+| `source_id` | `integer` | FK to source table |
+| `confidence` | `real` | |
+| `payload_json` | `jsonb` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `odds_snapshots`
+
+Point-in-time odds captured for each runner.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `race_id` | `integer FK → races NOT NULL` | |
+| `race_entry_id` | `integer FK → race_entries` | |
+| `captured_at` | `timestamptz NOT NULL` | |
+| `source` | `text NOT NULL` | `ocr_tote`, `api_feed`, `manual` |
+| `win_price` | `numeric` | |
+| `place_price` | `numeric` | |
+| `win_sp` | `numeric` | Starting price win |
+| `place_sp` | `numeric` | Starting price place |
+| `market_status` | `text` | `open`, `suspended`, `closed` |
+| `created_at` | `timestamptz` | |
+
+---
+
+## Domain 4 — Intelligence Entities
+
+### `scene_classifications`
+
+ML-classified scene type for each keyframe.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `keyframe_id` | `integer FK → keyframes NOT NULL` | |
+| `scene_type` | `text NOT NULL` | `studio`, `parade_ring`, `mounting_yard`, `barriers`, `live_race`, `finish`, `replay`, `advertisement`, `interview` |
+| `confidence` | `real` | 0–1 |
+| `model_version` | `text` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `excitement_scores`
+
+Audio excitement level scored per window. Used to drive replay visualisations and highlight detection.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `audio_event_id` | `integer FK → audio_events NOT NULL` | |
+| `race_id` | `integer FK → races` | Nullable — resolved after entity matching |
+| `race_offset_ms` | `integer` | Milliseconds from actual race start (negative = pre-race) |
+| `score` | `real NOT NULL` | 0–1 excitement level |
+| `peak` | `boolean DEFAULT false` | True if this is a local excitement peak |
+| `model_version` | `text` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `commentary_entities`
+
+Named entities extracted from transcript segments via NER. The key table for powering commentary replay with structured position data.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `transcript_segment_id` | `integer FK → transcript_segments NOT NULL` | |
+| `entity_type` | `text NOT NULL` | `runner_name`, `position_call`, `distance_call`, `race_signal`, `jockey_name` |
+| `raw_text` | `text NOT NULL` | Extracted text span |
+| `normalized_value` | `text` | e.g. `Rocket Man` (cleaned), `1` (for position), `600` (distance in metres) |
+| `runner_id` | `integer FK → runners` | Resolved if entity_type = `runner_name` |
+| `position` | `integer` | Resolved race position if entity_type = `position_call` |
+| `confidence` | `real` | |
+| `created_at` | `timestamptz` | |
+
+**Example NER output for** *"Rocket Man leads from Thunder Ridge at the 600"*:
+```
+{entity_type: "runner_name",   raw_text: "Rocket Man",    position: 1}
+{entity_type: "runner_name",   raw_text: "Thunder Ridge",  position: 2}
+{entity_type: "distance_call", raw_text: "the 600",        normalized_value: "600"}
+{entity_type: "position_call", raw_text: "leads from",     position: 1}
+```
+
+---
+
+### `race_summaries`
+
+AI-generated narrative summaries produced after a race completes.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `race_id` | `integer FK → races UNIQUE NOT NULL` | One summary per race |
+| `summary_text` | `text NOT NULL` | Full narrative |
+| `key_moments` | `jsonb` | Array of `{offset_ms, text, type}` highlight moments |
+| `winner_name` | `text` | Extracted winner |
+| `margin_description` | `text` | e.g. `"a head"`, `"two lengths"` |
+| `model_version` | `text` | LLM model/version used |
+| `generated_at` | `timestamptz NOT NULL` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `runner_embeddings`
+
+Vector embeddings for runners and races, enabling similarity search. Requires the `pgvector` PostgreSQL extension.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `subject_type` | `text NOT NULL` | `runner`, `race`, `audio_window` |
+| `subject_id` | `integer NOT NULL` | FK to the appropriate table |
+| `embedding_type` | `text NOT NULL` | `visual`, `audio`, `commentary`, `combined` |
+| `embedding` | `vector(1536)` | pgvector column |
+| `model_version` | `text` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### Updated: `transcript_segments`
+
+> **Addition for commentary replay:** `race_id` and `race_offset_ms` are added to link transcripts directly to their race and position on the race timeline. This is the foundation of the `GET /races/{id}/replay` endpoint.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `audio_event_id` | `integer FK → audio_events` | |
+| `race_id` | `integer FK → races` | Resolved race (nullable until matched) |
+| `race_offset_ms` | `integer` | Milliseconds from `races.actual_start_time` (negative = pre-race) |
+| `started_at` | `timestamptz NOT NULL` | |
+| `ended_at` | `timestamptz NOT NULL` | |
+| `text` | `text NOT NULL` | Transcribed text |
+| `language` | `text DEFAULT 'en'` | |
+| `confidence` | `real` | |
+| `model_version` | `text` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+## Domain 5 — Skin Engine
+
+The skin engine enables BETMAN_DATA to be licensed to external betting operators and content providers. Each licensee (tenant) gets fully isolated branding, configurable through an admin API.
+
+### `tenants`
+
+A licensed operator or content provider.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `name` | `text NOT NULL` | e.g. `Ladbrokes`, `Racing.com`, `William Hill` |
+| `slug` | `text UNIQUE NOT NULL` | URL-safe key: `ladbrokes`, `racing-com` |
+| `contact_email` | `text` | |
+| `license_type` | `text NOT NULL` | `full`, `content_only`, `odds_only` |
+| `license_expires_at` | `timestamptz` | |
+| `active` | `boolean DEFAULT true` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `skins`
+
+A named branding configuration for a tenant.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `tenant_id` | `integer FK → tenants NOT NULL` | |
+| `name` | `text NOT NULL` | e.g. `Ladbrokes Dark`, `G1 Premium` |
+| `slug` | `text NOT NULL` | e.g. `ladbrokes-dark` |
+| `is_default` | `boolean DEFAULT false` | Default skin for this tenant |
+| `active` | `boolean DEFAULT true` | |
+| `config_json` | `jsonb NOT NULL DEFAULT '{}'` | Colors, typography, layout, feature flags |
+| `created_at` | `timestamptz` | |
+| `updated_at` | `timestamptz` | |
+
+**`config_json` schema:**
+```json
+{
+  "colors": {
+    "primary": "#e63329",
+    "secondary": "#1a1a2e",
+    "accent": "#f5a623",
+    "text": "#ffffff",
+    "background": "#0d0d0d"
+  },
+  "typography": {
+    "font_family": "Inter, sans-serif",
+    "heading_weight": "700"
+  },
+  "layout": {
+    "replay_overlay_style": "cinematic",
+    "excitement_bar_style": "gradient",
+    "show_sponsor_watermark": true
+  },
+  "features": {
+    "commentary_replay": true,
+    "race_story": true,
+    "similarity_search": false,
+    "live_websocket": true,
+    "show_odds": true
+  }
+}
+```
+
+---
+
+### `skin_contexts`
+
+Scopes a skin to a specific context. Multiple contexts can match; the highest priority wins.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `skin_id` | `integer FK → skins NOT NULL` | |
+| `context_type` | `text NOT NULL` | `global`, `race_class`, `meeting`, `race`, `event` |
+| `context_ref` | `text` | e.g. `G1` for `race_class`, race ID for `race` |
+| `priority` | `integer DEFAULT 0` | Higher wins when multiple contexts match |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `skin_assets`
+
+Uploaded brand assets associated with a skin (logos, backgrounds, sponsor creatives).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `skin_id` | `integer FK → skins NOT NULL` | |
+| `asset_type` | `text NOT NULL` | `logo`, `logo_dark`, `favicon`, `background`, `sponsor_logo`, `watermark`, `ad_creative` |
+| `label` | `text` | Human-readable label |
+| `storage_uri` | `text NOT NULL` | Object storage path |
+| `cdn_url` | `text` | Resolved public CDN URL |
+| `file_format` | `text` | `png`, `svg`, `webp`, `jpg` |
+| `width` | `integer` | Pixels |
+| `height` | `integer` | Pixels |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `ad_slot_types`
+
+Defines named advertising positions available within the platform UI.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `code` | `text UNIQUE NOT NULL` | `replay_overlay_top`, `pre_race_banner`, `results_sidebar`, `race_card_footer`, `commentary_interstitial` |
+| `description` | `text` | |
+| `dimensions` | `text` | e.g. `728x90`, `300x250` |
+| `display_context` | `text` | `replay`, `pre_race`, `results`, `race_card`, `live` |
+
+---
+
+### `ad_placements`
+
+An ad creative assigned to a slot within a skin for a time window.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `skin_id` | `integer FK → skins NOT NULL` | |
+| `slot_type_id` | `integer FK → ad_slot_types NOT NULL` | |
+| `asset_id` | `integer FK → skin_assets` | The ad creative |
+| `label` | `text` | |
+| `click_url` | `text` | Destination URL |
+| `active_from` | `timestamptz` | |
+| `active_until` | `timestamptz` | |
+| `priority` | `integer DEFAULT 0` | Fallback ordering |
+| `created_at` | `timestamptz` | |
+
+---
+
+## Domain 5 — Skin Engine (continued)
+
+### `tenant_feeds`
+
+Links tenants to the feeds they are licensed to access. A tenant may override the default feed URL (e.g., a private higher-quality stream) and specify a quality preference.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `tenant_id` | `integer FK → tenants NOT NULL` | |
+| `feed_id` | `integer FK → feeds NOT NULL` | |
+| `override_url` | `text` | Custom HLS URL for this tenant (e.g., private stream) |
+| `quality_preference` | `text DEFAULT 'auto'` | `auto`, `high`, `medium`, `low` |
+| `active` | `boolean DEFAULT true` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+## Domain 6 — Track Conditions & Weather
+
+### `api_key_configs`
+
+Secure configuration for all external API integrations. Keys are encrypted at rest; the application decrypts at runtime using the platform master key.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `service_name` | `text NOT NULL` | `weatherlink`, `tab_nz`, `racing_australia`, `odds_provider`, `sportsbet` |
+| `key_name` | `text NOT NULL` | Human label, e.g. `WeatherLink Ellerslie Station` |
+| `encrypted_key` | `text NOT NULL` | AES-256 encrypted API key |
+| `endpoint_url` | `text` | Base URL for the service |
+| `extra_config_json` | `jsonb` | Service-specific config (station IDs, account IDs, etc.) |
+| `active` | `boolean DEFAULT true` | |
+| `created_at` | `timestamptz` | |
+| `updated_at` | `timestamptz` | |
+
+---
+
+### `weather_stations`
+
+A WeatherLink (or compatible) weather station installed at a track.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `track_name` | `text NOT NULL` | Must match `meetings.track_name` |
+| `station_id` | `text NOT NULL` | WeatherLink station identifier |
+| `api_key_config_id` | `integer FK → api_key_configs` | |
+| `label` | `text` | e.g. `Ellerslie Main Station` |
+| `latitude` | `double precision` | |
+| `longitude` | `double precision` | |
+| `elevation_m` | `real` | |
+| `active` | `boolean DEFAULT true` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `soil_moisture_probes`
+
+Individual soil moisture sensors positioned around the track (rail, centre, outside, etc. at various distances).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `station_id` | `integer FK → weather_stations NOT NULL` | |
+| `probe_label` | `text NOT NULL` | e.g. `rail_100m`, `centre_400m`, `outside_800m` |
+| `position_description` | `text` | Human description of placement |
+| `depth_mm` | `integer` | Depth of sensor in soil (mm) |
+| `distance_from_finish_m` | `integer` | Position along track |
+| `zone` | `text` | `rail`, `inside`, `centre`, `outside` |
+| `latitude` | `double precision` | |
+| `longitude` | `double precision` | |
+| `active` | `boolean DEFAULT true` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `weather_readings`
+
+Time-series weather observations from a station. Written continuously by the WeatherAdapter in the Consumer service.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `bigserial PK` | |
+| `station_id` | `integer FK → weather_stations NOT NULL` | |
+| `recorded_at` | `timestamptz NOT NULL` | |
+| `temperature_c` | `real` | Air temperature |
+| `humidity_pct` | `real` | Relative humidity 0–100 |
+| `wind_speed_kmh` | `real` | |
+| `wind_gust_kmh` | `real` | |
+| `wind_direction_deg` | `smallint` | 0–359 |
+| `rainfall_mm` | `real` | Rainfall in reading interval |
+| `rainfall_1h_mm` | `real` | Rolling 1-hour total |
+| `rainfall_24h_mm` | `real` | Rolling 24-hour total |
+| `barometric_pressure_hpa` | `real` | |
+| `uv_index` | `real` | |
+| `solar_radiation_wm2` | `real` | |
+| `dew_point_c` | `real` | |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `soil_moisture_readings`
+
+Time-series soil moisture measurements per probe. The multi-probe array paints a spatial picture of track moisture that directly feeds barrier analysis.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `bigserial PK` | |
+| `probe_id` | `integer FK → soil_moisture_probes NOT NULL` | |
+| `recorded_at` | `timestamptz NOT NULL` | |
+| `moisture_pct` | `real NOT NULL` | Volumetric water content % |
+| `soil_temperature_c` | `real` | |
+| `raw_value` | `real` | Raw sensor output (mV or Hz) for diagnostics |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `track_condition_readings`
+
+Official and estimated track condition ratings per meeting/race. Linked to weather and soil data at the time of reading.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `meeting_id` | `integer FK → meetings NOT NULL` | |
+| `race_id` | `integer FK → races` | Nullable — some ratings are per-meeting, not per-race |
+| `condition_code` | `text NOT NULL` | `H10`, `H9`, `H8`, `S7`, `S6`, `S5`, `G4`, `G3`, `G2`, `G1`, `F2`, `F1`, `ST` (synthetic) |
+| `condition_category` | `text NOT NULL` | `heavy`, `soft`, `good`, `firm`, `synthetic` |
+| `penetrometer_value` | `real` | Raw penetrometer reading in kg |
+| `recorded_at` | `timestamptz NOT NULL` | |
+| `source` | `text NOT NULL` | `official`, `stewards`, `estimated`, `weatherlink_derived` |
+| `weather_reading_id` | `integer FK → weather_readings` | Closest weather reading at this time |
+| `avg_soil_moisture_pct` | `real` | Average across all active probes at this time |
+| `notes` | `text` | e.g. `"Heavy overnight rain, rail moved 3m"` |
+| `created_at` | `timestamptz` | |
+
+---
+
+### `track_maps`
+
+Spatial metadata about each track — shape, distances, zones. Enables spatial barrier heat maps.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `track_name` | `text NOT NULL` | |
+| `surface` | `text NOT NULL` | `turf`, `synthetic` |
+| `circumference_m` | `integer` | Track circumference in metres |
+| `straight_m` | `integer` | Home straight length |
+| `geometry_json` | `jsonb` | GeoJSON LineString/Polygon of the track outline |
+| `zones_json` | `jsonb` | Array of `{zone, from_finish_m, to_finish_m, label}` |
+| `created_at` | `timestamptz` | |
+
+---
+
+## Domain 7 — Barrier Analysis
+
+### `barrier_outcomes`
+
+The core append-only ledger. One row per race entry, written after results are confirmed. This is the raw material for all barrier intelligence.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `bigserial PK` | |
+| `race_id` | `integer FK → races NOT NULL` | |
+| `race_entry_id` | `integer FK → race_entries NOT NULL` | |
+| `runner_id` | `integer FK → runners NOT NULL` | |
+| `barrier_number` | `integer NOT NULL` | The drawn barrier |
+| `field_size` | `integer NOT NULL` | Total runners in the race |
+| `relative_barrier` | `text NOT NULL` | `inside_third`, `middle_third`, `outside_third` (normalised for field size) |
+| `final_position` | `integer NOT NULL` | |
+| `won` | `boolean NOT NULL` | |
+| `placed` | `boolean NOT NULL` | Top 3 (or as per race conditions) |
+| `unplaced` | `boolean NOT NULL` | |
+| `margin_lengths` | `real` | Lengths behind winner (0 if winner) |
+| `track_name` | `text NOT NULL` | Denormalised for fast querying |
+| `surface` | `text NOT NULL` | `turf`, `synthetic` |
+| `distance_m` | `integer NOT NULL` | |
+| `race_class_code` | `text` | |
+| `race_class_group` | `text` | |
+| `condition_code` | `text` | `H10`, `S6`, `G4`, etc. — from `track_condition_readings` |
+| `condition_category` | `text` | `heavy`, `soft`, `good`, `firm` |
+| `penetrometer_value` | `real` | At race time |
+| `avg_soil_moisture_pct` | `real` | Average track moisture at race time |
+| `temperature_c` | `real` | At race time |
+| `humidity_pct` | `real` | At race time |
+| `rainfall_24h_mm` | `real` | At race time |
+| `race_date` | `date NOT NULL` | Denormalised for fast time-range queries |
+| `created_at` | `timestamptz` | |
+
+**Query example:**
+```sql
+SELECT barrier_number, COUNT(*) FILTER (WHERE won) AS wins,
+       COUNT(*) AS runners,
+       ROUND(COUNT(*) FILTER (WHERE won)::numeric / COUNT(*) * 100, 1) AS win_pct
+FROM barrier_outcomes
+WHERE track_name = 'Ellerslie'
+  AND condition_code = 'H10'
+  AND surface = 'turf'
+  AND distance_m BETWEEN 1400 AND 1600
+  AND race_date >= CURRENT_DATE - INTERVAL '3 years'
+GROUP BY barrier_number
+ORDER BY win_pct DESC;
+```
+
+---
+
+### `barrier_statistics`
+
+Pre-computed aggregations for fast API queries. Rebuilt after each race result is confirmed.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `track_name` | `text NOT NULL` | |
+| `surface` | `text NOT NULL` | |
+| `distance_band` | `text NOT NULL` | `1000-1200`, `1200-1400`, `1400-1600`, `1600-2000`, `2000+` |
+| `condition_category` | `text NOT NULL` | `heavy`, `soft`, `good`, `firm` |
+| `condition_code` | `text` | Specific code e.g. `H10` — null means all codes in category |
+| `field_size_band` | `text NOT NULL` | `1-8`, `9-12`, `13-16`, `17+` |
+| `barrier_number` | `integer NOT NULL` | |
+| `relative_barrier` | `text NOT NULL` | `inside_third`, `middle_third`, `outside_third` |
+| `race_class_group` | `text` | Null = all classes |
+| `total_runners` | `integer NOT NULL` | Sample size |
+| `wins` | `integer NOT NULL` | |
+| `places` | `integer NOT NULL` | |
+| `win_rate` | `real NOT NULL` | |
+| `place_rate` | `real NOT NULL` | |
+| `avg_win_price` | `real` | Average winning dividend |
+| `updated_at` | `timestamptz NOT NULL` | |
+
+---
+
+### `track_heatmap_cells`
+
+Pre-computed spatial heat map data for visualisation. Each cell represents a zone of the track, the condition, and the barrier success rates. Drives the visual track map UI.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `track_name` | `text NOT NULL` | |
+| `surface` | `text NOT NULL` | |
+| `condition_category` | `text NOT NULL` | |
+| `distance_band` | `text NOT NULL` | |
+| `zone` | `text NOT NULL` | `rail`, `inside`, `middle`, `outside` |
+| `distance_from_finish_band` | `text` | `0-200`, `200-400`, `400-800`, `800+` |
+| `win_count` | `integer NOT NULL DEFAULT 0` | |
+| `place_count` | `integer NOT NULL DEFAULT 0` | |
+| `runner_count` | `integer NOT NULL DEFAULT 0` | |
+| `win_rate` | `real` | |
+| `place_rate` | `real` | |
+| `intensity` | `real` | Normalised 0–1 for heat map colour gradient |
+| `updated_at` | `timestamptz NOT NULL` | |
+
+---
+
+## Domain 8 — Odds Analytics
+
+### `odds_movements`
+
+Every detected significant odds movement. Written by the OddsMovementDetector in the Consumer service after comparing consecutive snapshots.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `bigserial PK` | |
+| `race_id` | `integer FK → races NOT NULL` | |
+| `race_entry_id` | `integer FK → race_entries NOT NULL` | |
+| `detected_at` | `timestamptz NOT NULL` | Wall-clock time of detection |
+| `time_to_jump_s` | `integer` | Seconds before scheduled start (negative = after start) |
+| `from_price` | `numeric NOT NULL` | Previous win price |
+| `to_price` | `numeric NOT NULL` | New win price |
+| `movement_pct` | `real NOT NULL` | % change (negative = firming, positive = drifting) |
+| `movement_type` | `text NOT NULL` | `steam` (rapid firm), `firm`, `drift`, `blowout` (extreme drift), `late_firm`, `market_open`, `market_suspend` |
+| `source` | `text NOT NULL` | `api_feed`, `ocr_tote` |
+| `created_at` | `timestamptz` | |
+
+**Movement type thresholds (configurable):**
+- `steam`: > 20% firming within 5 minutes
+- `firm`: 5–20% firming
+- `drift`: 5–20% lengthening
+- `blowout`: > 20% lengthening
+- `late_firm`: any firming within 10 minutes of jump
+
+---
+
+### `odds_analytics`
+
+Pre-computed per-entry odds summary for a race. Updated after each snapshot batch.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `serial PK` | |
+| `race_id` | `integer FK → races NOT NULL` | |
+| `race_entry_id` | `integer FK → race_entries UNIQUE NOT NULL` | |
+| `opening_price` | `numeric` | First recorded price |
+| `closing_price` | `numeric` | Last price before market suspension |
+| `min_price` | `numeric` | Shortest price recorded |
+| `max_price` | `numeric` | Longest price recorded |
+| `price_range` | `real` | `max - min` |
+| `total_movement_pct` | `real` | Opening to closing % change |
+| `firmings_count` | `integer DEFAULT 0` | Number of firming movements detected |
+| `driftings_count` | `integer DEFAULT 0` | Number of drifting movements detected |
+| `steam_detected` | `boolean DEFAULT false` | True if a steam event was detected |
+| `blowout_detected` | `boolean DEFAULT false` | True if a blowout event was detected |
+| `biggest_move_pct` | `real` | Largest single movement % |
+| `biggest_move_type` | `text` | Type of biggest movement |
+| `snapshot_count` | `integer DEFAULT 0` | Total snapshots recorded |
+| `updated_at` | `timestamptz NOT NULL` | |
+
+```
+tenants ──< skins ──< skin_contexts
+                  ──< skin_assets
+                  ──< ad_placements >── ad_slot_types
+                                    >── skin_assets (creative)
+
+races ──< race_timeline_events
+      ──< odds_snapshots
+      ──< event_predictions
+      ──  race_summaries (1:1)
+
+transcript_segments ──< commentary_entities
+audio_events ──< excitement_scores
+keyframes ──< scene_classifications
+
+runner_embeddings (subject_type=runner) >── runners
+runner_embeddings (subject_type=race)   >── races
+```
+
+```
+meetings ──< races ──< race_entries >── runners
+                │
+                └──< race_timeline_events
+                └──< odds_snapshots
+                └──< event_predictions
+
+feeds ──< stream_sessions ──< media_segments ──< audio_chunks
+                                             ──< keyframes
+                                             ──< ocr_observations
+                                             ──< audio_events ──< transcript_segments
+
+media_segments ──< clips
+races ──< clips
+```
+
+---
+
+## Design Notes
+
+- **Race class filtering** is a first-class concern. Use `race_class_code` for exact matches and `race_classes.group` for category-level filtering.
+- **Timestamps** are always stored as `timestamptz` (UTC). The application layer is responsible for converting to local time for display.
+- **`storage_uri`** fields contain a relative object-store path (`raw/feed_1/2024-01-15/session_42/0001.ts`). The base URL is resolved at query time from environment config.
+- **`payload_json`** and `bbox_json` fields use JSONB for flexible storage of structured extension data without requiring schema migrations for every new attribute.
+- Indexes on `race_id`, `feed_id`, `segment_started_at`, and `frame_timestamp` columns will be critical for query performance at scale.

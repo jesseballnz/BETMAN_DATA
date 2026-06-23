@@ -1,0 +1,155 @@
+# docker-compose.yml — BETMAN_DATA local development stack
+#
+# Brings up the full BETMAN_DATA platform locally:
+#   - PostgreSQL 16 with pgvector extension
+#   - Redis 7 (live state + task queue)
+#   - MinIO (S3-compatible object storage)
+#   - BETMAN Data API  (http://localhost:8000)
+#   - BETMAN Consumer  (nerve centre — HLS + race data + odds + weather)
+#
+# Usage:
+#   docker compose up -d          # start everything
+#   docker compose up -d postgres redis minio  # infrastructure only
+#   docker compose logs -f api    # tail API logs
+#   docker compose down -v        # full reset (removes volumes)
+
+services:
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: betman
+      POSTGRES_USER: betman
+      POSTGRES_PASSWORD: betman
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U betman -d betman"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: betman
+      MINIO_ROOT_PASSWORD: betman_secret
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Creates the betman-media bucket on first run
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 betman betman_secret &&
+        mc mb --ignore-existing local/betman-media &&
+        mc anonymous set download local/betman-media &&
+        echo 'MinIO bucket ready.'
+      "
+    restart: "no"
+
+  # ── Application services ─────────────────────────────────────────────────────
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./infra/migrations:/migrations
+    environment:
+      PGPASSWORD: betman
+    entrypoint: >
+      /bin/sh -c "
+        psql -h postgres -U betman -d betman -f /migrations/001_initial_schema.sql &&
+        echo 'Migrations applied.'
+      "
+    restart: "no"
+
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "******postgres:5432/betman"
+      REDIS_URL: "redis://redis:6379/0"
+      MEDIA_BASE_URL: "http://minio:9000/betman-media"
+      CDN_BASE_URL: "http://localhost:9000/betman-media"
+      ADMIN_API_KEY: "dev-admin-key-change-in-production"
+      PLATFORM_MASTER_KEY: "dev-master-key-32-bytes-minimum!!"
+      ENVIRONMENT: "development"
+      LOG_LEVEL: "debug"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  consumer:
+    build:
+      context: ./services/consumer
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "******postgres:5432/betman"
+      REDIS_URL: "redis://redis:6379/0"
+      QUEUE_URL: "redis://redis:6379/1"
+      STORAGE_BASE_PATH: "s3://betman-media"
+      PLATFORM_MASTER_KEY: "dev-master-key-32-bytes-minimum!!"
+      ENVIRONMENT: "development"
+      LOG_LEVEL: "debug"
+      # Override WeatherLink URL for local dev (point to a mock if needed)
+      WEATHERLINK_BASE_URL: "https://api.weatherlink.com/v2"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+  minio_data:
