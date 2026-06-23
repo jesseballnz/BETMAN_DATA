@@ -87,6 +87,16 @@ All media blobs are stored in an S3-compatible object store (e.g. AWS S3, MinIO 
 
 ---
 
+## The Vision
+
+BETMAN_DATA is not just a data warehouse — it is an intelligence platform built around live racing. The goal is to make every race **replayable, searchable, and understandable** from its audio and visual signals alone. A new engineer or product team should be able to query "show me the last 30 seconds of commentary before Rocket Man crossed the line in the 2024 Auckland Cup" and get back structured, timestamped, visually-rich data immediately.
+
+Every design decision is made with two questions in mind:
+1. Can a front-end consume this without further transformation?
+2. Can a data scientist train a model on this tomorrow?
+
+---
+
 ## Layer 3 — Async Processing Workers
 
 Workers consume events from the task queue and operate on stored segments.
@@ -124,6 +134,57 @@ A separate pass over `audio_events` and `ocr_observations` generates `event_pred
 - `finish_detected`
 - `result_announced`
 
+### Event prediction
+
+A separate pass over `audio_events` and `ocr_observations` generates `event_predictions` and `race_timeline_events`, e.g.:
+- `parade_ring_started`
+- `barriers_loading`
+- `jump_imminent`
+- `race_live`
+- `finish_detected`
+- `result_announced`
+
+---
+
+## Layer 3b — Intelligence Layer
+
+This is where BETMAN_DATA moves from a data store to a platform. After raw signals are extracted, a second pass of intelligence workers enriches the data.
+
+### Scene Classification
+
+Every keyframe is classified into one of: `studio`, `parade_ring`, `mounting_yard`, `barriers`, `live_race`, `finish`, `replay`, `advertisement`, `interview`. This powers the visual timeline and smart clipping, and lets the API filter media by scene type. Stored in `scene_classifications`.
+
+### Excitement Scoring
+
+Each audio window is scored for excitement level (0–1) using a lightweight audio model trained to distinguish the flat tone of a pre-race parade from the crescendo of a finish call. Excitement scores are stored per window and exposed as a time-series chart endpoint (`GET /races/{id}/excitement`). This is the spine of the replay visualization.
+
+### Commentary Named Entity Recognition (NER)
+
+After ASR transcription, an NER pass extracts structured data from commentary text:
+- **Runner positions** — "Rocket Man leads from Thunder Ridge at the 600" → `[{position: 1, runner: "Rocket Man"}, {position: 2, runner: "Thunder Ridge"}]`
+- **Distance calls** — "at the 800 metre mark"
+- **Runner mentions** — any runner name reference
+- **Race signals** — "they're racing", "and he wins", "protest flag is up"
+
+Stored in `commentary_entities`, linked to `transcript_segments`. This is what makes commentary replay rich — the system knows *who* is being talked about at every moment.
+
+### Race Story Generation
+
+After a race completes, an LLM pass synthesises the transcript segments, race timeline events, and key commentary entities into a concise, engaging narrative stored in `race_summaries`. Example output:
+
+> *"In a dramatic running of the 2024 Auckland Cup, Rocket Man (barrier 5) surged from midfield at the 600m mark to overhaul Thunder Ridge in the final strides. The crowd's excitement peaked at the 200m as the two leaders drew clear of the field. Rocket Man's winning margin was a head in a race run in 3:18.2."*
+
+This narrative is served directly by `GET /races/{id}/story`.
+
+### Vector Embeddings
+
+For each race, runner, and significant audio window, we generate vector embeddings. These enable:
+- **Similarity search** — "find races with a finish like this one"
+- **Runner recognition** — match a visual crop to a known runner
+- **Commentary pattern detection** — find races where the commentary structure matched "dominated wire-to-wire"
+
+Stored in `runner_embeddings` using [pgvector](https://github.com/pgvector/pgvector).
+
 ---
 
 ## Layer 4 — Operational Database + Warehouse
@@ -146,14 +207,20 @@ See [data-model.md](data-model.md) for the full entity reference.
 
 **Service:** `services/api/`
 
-A FastAPI service exposing structured racing and signal data.
+A FastAPI service exposing structured racing and signal data. Designed to be consumed directly by front-ends and internal tooling without further transformation — every response includes the data needed to render a rich visual experience.
 
-- Stateless, horizontally scalable.
-- Reads from PostgreSQL.
-- Does not perform media processing; it is a query layer only.
-- Authenticated via shared API key or internal network policy (auth strategy TBD).
+**Visualization-first design principles:**
+- Replay endpoints return time-ordered frames ready to step through
+- Odds endpoints return chart-ready time-series arrays
+- Timeline endpoints include thumbnail URLs alongside every event
+- All timestamps include both UTC ISO-8601 and a `offset_ms` relative to race start
+- Excitement scores are included on any time-indexed resource
 
-See [api-spec.md](api-spec.md) for the endpoint reference.
+**Real-time capabilities:**
+- `WS /live/{feed_id}` — WebSocket stream of live race events as they are detected
+- Clients receive structured JSON events: commentary fragments, excitement spikes, position calls, odds updates, race state transitions
+
+See [api-spec.md](api-spec.md) for the full endpoint reference.
 
 ---
 
@@ -163,13 +230,19 @@ See [api-spec.md](api-spec.md) for the endpoint reference.
 |---|---|---|
 | Ingestion | Python + `m3u8` + `httpx` | Simple, reliable HLS playlist handling |
 | Media processing | FFmpeg | Industry standard, broad codec support |
-| OCR | Tesseract / PaddleOCR | Practical for overlay text |
+| OCR | PaddleOCR / Tesseract | Practical for overlay text |
+| Scene classification | EfficientNet / lightweight CNN | Fast inference per frame |
 | Audio classification | Lightweight CNN or rule-based VAD first | Cost-efficient first pass |
+| Excitement scoring | Audio feature model (RMS, spectral centroid) | Real-time capable |
 | ASR | Whisper (batch) or streaming ASR | Accurate commentary transcription |
+| NER | spaCy + custom racing entity model | Runner/position extraction |
+| Race story generation | OpenAI / local LLM (post-race batch) | Rich narrative summaries |
+| Vector embeddings | pgvector extension on PostgreSQL | Similarity search without extra infra |
 | API | FastAPI | Modern Python, async, OpenAPI built-in |
-| Database | PostgreSQL 15+ | Strong JSONB support, full-text search, mature |
+| Real-time | FastAPI WebSocket | Low-latency live event stream |
+| Database | PostgreSQL 15+ with pgvector | Strong JSONB, full-text search, vectors |
 | Object storage | S3-compatible | Decoupled from DB, scalable |
-| Task queue | Redis + Celery (or ARQ) | Lightweight async task dispatch |
+| Task queue | Redis + ARQ or Celery | Lightweight async task dispatch |
 | Local dev | Docker Compose | Simple local environment parity |
 
 ---
@@ -183,15 +256,28 @@ Trackside HLS stream
   → writes to object storage
   → inserts media_segments record
   → emits segment_stored event
-      → ocr-worker extracts frames, runs OCR, writes ocr_observations
-      → audio-worker extracts audio, runs VAD + classifier, writes audio_events
-      → (if commentary) audio-worker runs ASR, writes transcript_segments
-  → event prediction pass:
-      → reads audio_events + ocr_observations
-      → writes race_timeline_events + event_predictions
+      → ocr-worker:
+          extracts keyframes
+          classifies scene → scene_classifications
+          runs OCR → ocr_observations
+      → audio-worker:
+          extracts audio window
+          runs VAD + classifier → audio_events
+          scores excitement → excitement_scores
+          (if commentary) runs ASR → transcript_segments
+          runs NER → commentary_entities
+      → event prediction pass:
+          reads audio_events + ocr_observations
+          writes race_timeline_events + event_predictions
+      → (post-race) intelligence pass:
+          generates race_summaries (LLM)
+          generates runner_embeddings (vector model)
   → API layer serves:
-      → /races/{id}/timeline
-      → /races/{id}/signals
-      → /search/transcripts
-      → /search/ocr
+      → GET /races/{id}/replay     ← time-ordered commentary + events
+      → GET /races/{id}/story      ← AI narrative
+      → GET /races/{id}/excitement ← chart-ready excitement time-series
+      → GET /races/{id}/odds-drift ← chart-ready odds time-series
+      → GET /races/{id}/scene-timeline ← visual scene breakdown with thumbnails
+      → GET /search/similar        ← embedding-based race similarity
+      → WS /live/{feed_id}         ← real-time event stream
 ```
