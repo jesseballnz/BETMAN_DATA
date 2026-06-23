@@ -1,13 +1,16 @@
-from enum import Enum
-from datetime import datetime
+from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from datetime import datetime
+from enum import Enum
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
+
+from app.db import fetch_all, fetch_row
 
 router = APIRouter(prefix="/races", tags=["races"])
 
-
-# ── Response models ───────────────────────────────────────────────────────────
 
 class ReplayFrameType(str, Enum):
     commentary = "commentary"
@@ -31,7 +34,6 @@ class ReplayFrame(BaseModel):
     excitement_score: float | None = None
     thumbnail_url: str | None = None
     positions: list[PositionCall] | None = None
-    # odds_update fields
     runner_name: str | None = None
     saddle_cloth: str | None = None
     win_price: float | None = None
@@ -109,7 +111,7 @@ class OddsMovementSummary(BaseModel):
     to_price: float
     movement_pct: float
     detected_at: datetime
-    time_to_jump_s: int
+    time_to_jump_s: int | None
 
 
 class OddsEntryAnalysis(BaseModel):
@@ -139,9 +141,9 @@ class OddsAnalysisResponse(BaseModel):
 class BarrierEntry(BaseModel):
     saddle_cloth: str
     runner_name: str
-    barrier_number: int
+    barrier_number: int | None
     field_size: int
-    relative_barrier: str
+    relative_barrier: str | None
     barrier_stats: dict | None = None
 
 
@@ -152,10 +154,34 @@ class BarrierContextResponse(BaseModel):
     entries: list[BarrierEntry]
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+def _build_race_filters(
+    *,
+    date: str | None,
+    track: str | None,
+    race_class: str | None,
+    race_class_group: str | None,
+    status: str | None,
+) -> tuple[str, list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    for value, clause in (
+        (date, "m.meeting_date = ${idx}"),
+        (track, "LOWER(m.track_name) = LOWER(${idx})"),
+        (race_class, "r.race_class_code = ${idx}"),
+        (race_class_group, "r.race_class_group = ${idx}"),
+        (status, "r.status = ${idx}"),
+    ):
+        if value is not None:
+            params.append(value)
+            clauses.append(clause.replace("${idx}", f"${len(params)}"))
+
+    return ("WHERE " + " AND ".join(clauses)) if clauses else "", params
+
 
 @router.get("", summary="List races")
 async def list_races(
+    request: Request,
     date: str | None = Query(None, description="Filter by meeting date (YYYY-MM-DD)"),
     track: str | None = Query(None),
     race_class: str | None = Query(None, description="Exact class code: G1, R75, MDN"),
@@ -164,21 +190,167 @@ async def list_races(
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
 ):
-    """List races with optional filtering. Includes meeting and class context."""
-    # TODO: query races JOIN meetings JOIN race_classes
-    return {"races": [], "total": 0, "limit": limit, "offset": offset}
+    where_sql, params = _build_race_filters(
+        date=date,
+        track=track,
+        race_class=race_class,
+        race_class_group=race_class_group,
+        status=status,
+    )
+    params.extend([limit, offset])
+    rows = await fetch_all(
+        request,
+        f"""
+        SELECT
+            r.id,
+            r.race_number,
+            r.name,
+            r.distance_m,
+            r.race_class_code,
+            r.race_class_group,
+            r.scheduled_start_time,
+            r.actual_start_time,
+            r.status,
+            r.prize_money,
+            m.id AS meeting_id,
+            m.track_name,
+            m.meeting_date,
+            COALESCE(r.surface, m.surface) AS surface,
+            m.jurisdiction,
+            COUNT(*) OVER() AS total_count
+        FROM races r
+        JOIN meetings m ON m.id = r.meeting_id
+        {where_sql}
+        ORDER BY m.meeting_date DESC, m.track_name, r.race_number
+        LIMIT ${len(params) - 1} OFFSET ${len(params)}
+        """,
+        *params,
+    )
+    total = rows[0]["total_count"] if rows else 0
+    races = [
+        {
+            "id": row["id"],
+            "race_number": row["race_number"],
+            "name": row["name"],
+            "meeting": {
+                "id": row["meeting_id"],
+                "track_name": row["track_name"],
+                "meeting_date": row["meeting_date"],
+                "surface": row["surface"],
+                "jurisdiction": row["jurisdiction"],
+            },
+            "distance_m": row["distance_m"],
+            "race_class_code": row["race_class_code"],
+            "race_class_group": row["race_class_group"],
+            "scheduled_start_time": row["scheduled_start_time"],
+            "actual_start_time": row["actual_start_time"],
+            "status": row["status"],
+            "prize_money": float(row["prize_money"]) if row["prize_money"] is not None else None,
+        }
+        for row in rows
+    ]
+    return {"races": races, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/{race_id}", summary="Get race detail")
-async def get_race(race_id: int):
-    """Full race detail including all entries."""
-    # TODO: query race + entries + runners
-    raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+async def get_race(request: Request, race_id: int):
+    race = await fetch_row(
+        request,
+        """
+        SELECT
+            r.id,
+            r.race_number,
+            r.name,
+            r.distance_m,
+            r.race_class_code,
+            r.race_class_group,
+            rc.rank AS race_class_rank,
+            r.scheduled_start_time,
+            r.actual_start_time,
+            r.status,
+            r.prize_money,
+            m.id AS meeting_id,
+            m.track_name,
+            m.meeting_date,
+            COALESCE(r.surface, m.surface) AS surface,
+            m.jurisdiction
+        FROM races r
+        JOIN meetings m ON m.id = r.meeting_id
+        LEFT JOIN race_classes rc ON rc.id = r.race_class_id
+        WHERE r.id = $1
+        """,
+        race_id,
+    )
+    if race is None:
+        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+
+    entries = await fetch_all(
+        request,
+        """
+        SELECT
+            re.id,
+            re.saddle_cloth,
+            re.barrier_number,
+            re.jockey_or_driver,
+            re.trainer,
+            re.weight_kg,
+            re.scratched,
+            re.final_position,
+            run.id AS runner_id,
+            run.name AS runner_name,
+            run.type AS runner_type,
+            run.country_of_origin
+        FROM race_entries re
+        JOIN runners run ON run.id = re.runner_id
+        WHERE re.race_id = $1
+        ORDER BY COALESCE(re.barrier_number, 999), COALESCE(re.saddle_cloth, '')
+        """,
+        race_id,
+    )
+
+    return {
+        "id": race["id"],
+        "race_number": race["race_number"],
+        "name": race["name"],
+        "meeting": {
+            "id": race["meeting_id"],
+            "track_name": race["track_name"],
+            "meeting_date": race["meeting_date"],
+            "surface": race["surface"],
+            "jurisdiction": race["jurisdiction"],
+        },
+        "distance_m": race["distance_m"],
+        "race_class_code": race["race_class_code"],
+        "race_class_group": race["race_class_group"],
+        "race_class_rank": race["race_class_rank"],
+        "scheduled_start_time": race["scheduled_start_time"],
+        "actual_start_time": race["actual_start_time"],
+        "status": race["status"],
+        "prize_money": float(race["prize_money"]) if race["prize_money"] is not None else None,
+        "entries": [
+            {
+                "id": entry["id"],
+                "saddle_cloth": entry["saddle_cloth"],
+                "barrier_number": entry["barrier_number"],
+                "runner": {
+                    "id": entry["runner_id"],
+                    "name": entry["runner_name"],
+                    "type": entry["runner_type"],
+                    "country_of_origin": entry["country_of_origin"],
+                },
+                "jockey_or_driver": entry["jockey_or_driver"],
+                "trainer": entry["trainer"],
+                "weight_kg": float(entry["weight_kg"]) if entry["weight_kg"] is not None else None,
+                "scratched": entry["scratched"],
+                "final_position": entry["final_position"],
+            }
+            for entry in entries
+        ],
+    }
 
 
 @router.get("/{race_id}/timeline", summary="Race timeline events")
 async def get_race_timeline(race_id: int):
-    """Canonical timeline events ordered by time. Includes thumbnail URLs."""
     return {"race_id": race_id, "actual_start_time": None, "events": []}
 
 
@@ -187,52 +359,207 @@ async def get_race_signals(
     race_id: int,
     type: str | None = Query(None, description="ocr, audio, scene"),
 ):
-    """All raw signal observations (OCR, audio events, scene classifications)."""
-    return {"race_id": race_id, "signals": []}
+    return {"race_id": race_id, "signal_type": type, "signals": []}
 
 
 @router.get("/{race_id}/odds", summary="Odds snapshots")
-async def get_race_odds(race_id: int):
-    """All odds snapshots for all entries — suitable for a live odds table."""
-    return {"race_id": race_id, "entries": []}
+async def get_race_odds(request: Request, race_id: int):
+    race = await fetch_row(
+        request,
+        "SELECT id, actual_start_time, scheduled_start_time FROM races WHERE id = $1",
+        race_id,
+    )
+    if race is None:
+        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+
+    rows = await fetch_all(
+        request,
+        """
+        SELECT
+            re.id AS race_entry_id,
+            COALESCE(re.saddle_cloth, '') AS saddle_cloth,
+            run.name AS runner_name,
+            os.captured_at,
+            os.win_price,
+            os.place_price,
+            os.source
+        FROM race_entries re
+        JOIN runners run ON run.id = re.runner_id
+        LEFT JOIN odds_snapshots os ON os.race_entry_id = re.id
+        WHERE re.race_id = $1
+        ORDER BY re.id, os.captured_at
+        """,
+        race_id,
+    )
+    entries = _group_odds_rows(rows, race["actual_start_time"] or race["scheduled_start_time"])
+    return {
+        "race_id": race_id,
+        "actual_start_time": race["actual_start_time"],
+        "entries": entries,
+    }
 
 
 @router.get("/{race_id}/odds-drift", response_model=OddsDriftResponse, summary="Odds drift time series")
 async def get_odds_drift(
+    request: Request,
     race_id: int,
     entry_id: int | None = Query(None),
 ):
-    """Chart-ready time-series odds data per runner from market open to suspension."""
-    return OddsDriftResponse(race_id=race_id, actual_start_time=None, entries=[])
+    race = await fetch_row(
+        request,
+        "SELECT id, actual_start_time, scheduled_start_time FROM races WHERE id = $1",
+        race_id,
+    )
+    if race is None:
+        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+
+    params: list[Any] = [race_id]
+    entry_filter = ""
+    if entry_id is not None:
+        params.append(entry_id)
+        entry_filter = f"AND re.id = ${len(params)}"
+
+    rows = await fetch_all(
+        request,
+        f"""
+        SELECT
+            re.id AS race_entry_id,
+            COALESCE(re.saddle_cloth, '') AS saddle_cloth,
+            run.name AS runner_name,
+            os.captured_at,
+            os.win_price,
+            os.place_price,
+            os.source
+        FROM race_entries re
+        JOIN runners run ON run.id = re.runner_id
+        LEFT JOIN odds_snapshots os ON os.race_entry_id = re.id
+        WHERE re.race_id = $1 {entry_filter}
+        ORDER BY re.id, os.captured_at
+        """,
+        *params,
+    )
+    entries = [OddsEntryDrift(**entry) for entry in _group_odds_rows(rows, race["actual_start_time"] or race["scheduled_start_time"])]
+    return OddsDriftResponse(race_id=race_id, actual_start_time=race["actual_start_time"], entries=entries)
 
 
 @router.get("/{race_id}/odds-analysis", response_model=OddsAnalysisResponse, summary="Odds intelligence analysis")
-async def get_odds_analysis(race_id: int):
-    """
-    Full odds movement analysis — opening/closing prices, steam detection,
-    blowout detection, notable movements. Find the theory in the chaos.
-    """
+async def get_odds_analysis(request: Request, race_id: int):
+    race = await fetch_row(
+        request,
+        "SELECT id, name, scheduled_start_time FROM races WHERE id = $1",
+        race_id,
+    )
+    if race is None:
+        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+
+    rows = await fetch_all(
+        request,
+        """
+        SELECT
+            oa.race_entry_id,
+            run.name AS runner_name,
+            COALESCE(re.saddle_cloth, '') AS saddle_cloth,
+            oa.opening_price,
+            oa.closing_price,
+            oa.min_price,
+            oa.max_price,
+            oa.total_movement_pct,
+            oa.steam_detected,
+            oa.blowout_detected,
+            oa.firmings_count,
+            oa.driftings_count,
+            om.movement_type AS biggest_move_type,
+            om.from_price,
+            om.to_price,
+            om.movement_pct,
+            om.detected_at,
+            om.time_to_jump_s
+        FROM odds_analytics oa
+        JOIN race_entries re ON re.id = oa.race_entry_id
+        JOIN runners run ON run.id = re.runner_id
+        LEFT JOIN LATERAL (
+            SELECT movement_type, from_price, to_price, movement_pct, detected_at, time_to_jump_s
+            FROM odds_movements om
+            WHERE om.race_entry_id = oa.race_entry_id
+            ORDER BY ABS(om.movement_pct) DESC NULLS LAST, om.detected_at DESC
+            LIMIT 1
+        ) om ON TRUE
+        WHERE oa.race_id = $1
+        ORDER BY oa.steam_detected DESC, oa.total_movement_pct ASC NULLS LAST, run.name
+        """,
+        race_id,
+    )
+
+    movements = await fetch_all(
+        request,
+        """
+        SELECT
+            run.name AS runner_name,
+            COALESCE(re.saddle_cloth, '') AS saddle_cloth,
+            om.movement_type,
+            om.from_price,
+            om.to_price,
+            om.movement_pct,
+            om.detected_at,
+            om.time_to_jump_s
+        FROM odds_movements om
+        JOIN race_entries re ON re.id = om.race_entry_id
+        JOIN runners run ON run.id = re.runner_id
+        WHERE om.race_id = $1
+        ORDER BY ABS(om.movement_pct) DESC, om.detected_at DESC
+        LIMIT 20
+        """,
+        race_id,
+    )
+
+    entries: list[OddsEntryAnalysis] = []
+    for row in rows:
+        biggest_move = None
+        if row["biggest_move_type"]:
+            biggest_move = OddsMovementSummary(
+                runner_name=row["runner_name"],
+                saddle_cloth=row["saddle_cloth"],
+                movement_type=row["biggest_move_type"],
+                from_price=float(row["from_price"]),
+                to_price=float(row["to_price"]),
+                movement_pct=float(row["movement_pct"]),
+                detected_at=row["detected_at"],
+                time_to_jump_s=row["time_to_jump_s"],
+            )
+        entries.append(
+            OddsEntryAnalysis(
+                race_entry_id=row["race_entry_id"],
+                runner_name=row["runner_name"],
+                saddle_cloth=row["saddle_cloth"],
+                opening_price=float(row["opening_price"]) if row["opening_price"] is not None else None,
+                closing_price=float(row["closing_price"]) if row["closing_price"] is not None else None,
+                min_price=float(row["min_price"]) if row["min_price"] is not None else None,
+                max_price=float(row["max_price"]) if row["max_price"] is not None else None,
+                total_movement_pct=row["total_movement_pct"],
+                steam_detected=row["steam_detected"],
+                blowout_detected=row["blowout_detected"],
+                firmings_count=row["firmings_count"],
+                driftings_count=row["driftings_count"],
+                biggest_move=biggest_move,
+            )
+        )
+
     return OddsAnalysisResponse(
         race_id=race_id,
-        race_name=None,
-        scheduled_start_time=None,
-        entries=[],
-        notable_movements=[],
+        race_name=race["name"],
+        scheduled_start_time=race["scheduled_start_time"],
+        entries=entries,
+        notable_movements=[OddsMovementSummary(**_coerce_movement(row)) for row in movements],
     )
 
 
 @router.get("/{race_id}/excitement", response_model=ExcitementResponse, summary="Excitement time series")
 async def get_excitement(race_id: int):
-    """
-    Excitement score time series from pre-race to post-result.
-    Render as a waveform or gradient bar behind the replay timeline.
-    """
     return ExcitementResponse(race_id=race_id, actual_start_time=None, samples=[])
 
 
 @router.get("/{race_id}/scene-timeline", summary="Visual scene breakdown")
 async def get_scene_timeline(race_id: int):
-    """Scene classification breakdown with thumbnail URLs — the visual storyboard."""
     return {"race_id": race_id, "scenes": []}
 
 
@@ -243,20 +570,6 @@ async def get_race_replay(
     to_ms: int | None = Query(None, description="End offset ms"),
     include: str = Query("commentary,events,odds,excitement", description="Comma-separated frame types"),
 ):
-    """
-    The centrepiece endpoint. Returns a unified, time-ordered stream of
-    commentary, race events, position calls, and odds updates — everything
-    needed to replay a race from its audio narrative alone.
-
-    Clients step through replay_frames sequentially to reconstruct the full
-    race experience as text + structured data, with no video required.
-    """
-    # TODO: query and merge:
-    #   - transcript_segments WHERE race_id = race_id ORDER BY race_offset_ms
-    #   - race_timeline_events WHERE race_id = race_id
-    #   - odds_snapshots WHERE race_id = race_id (if 'odds' in include)
-    #   - excitement_scores WHERE race_id = race_id (if 'excitement' in include)
-    # Then merge-sort by offset_ms and return as ReplayFrame list
     return RaceReplayResponse(
         race_id=race_id,
         race_name=None,
@@ -271,29 +584,124 @@ async def get_race_replay(
 
 @router.get("/{race_id}/story", response_model=RaceStoryResponse, summary="AI race narrative")
 async def get_race_story(race_id: int):
-    """
-    AI-generated prose narrative of the race, produced from transcripts
-    and timeline events after the race completes.
-    """
-    # TODO: query race_summaries WHERE race_id = race_id
     raise HTTPException(status_code=404, detail=f"No story available for race {race_id}")
 
 
 @router.get("/{race_id}/highlights", summary="Curated clip sequence")
 async def get_race_highlights(race_id: int):
-    """Key race moments as short clip references with thumbnails."""
     return {"race_id": race_id, "clips": []}
 
 
 @router.get("/{race_id}/barrier-context", response_model=BarrierContextResponse, summary="Pre-race barrier stats")
-async def get_barrier_context(race_id: int):
-    """
-    Each entry's drawn barrier alongside historical barrier statistics for
-    this track and current condition. Ideal for pre-race analysis UI.
-    """
+async def get_barrier_context(request: Request, race_id: int):
+    race = await fetch_row(
+        request,
+        """
+        SELECT r.id, m.track_name, COALESCE(r.surface, m.surface) AS surface, r.distance_m,
+               tc.condition_code, tc.condition_category
+        FROM races r
+        JOIN meetings m ON m.id = r.meeting_id
+        LEFT JOIN LATERAL (
+            SELECT condition_code, condition_category
+            FROM track_condition_readings tcr
+            WHERE tcr.race_id = r.id OR (tcr.race_id IS NULL AND tcr.meeting_id = m.id)
+            ORDER BY CASE WHEN tcr.race_id = r.id THEN 0 ELSE 1 END, recorded_at DESC
+            LIMIT 1
+        ) tc ON TRUE
+        WHERE r.id = $1
+        """,
+        race_id,
+    )
+    if race is None:
+        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+
+    entries = await fetch_all(
+        request,
+        """
+        SELECT re.saddle_cloth, run.name AS runner_name, re.barrier_number,
+               COUNT(*) OVER ()::int AS field_size,
+               CASE
+                   WHEN re.barrier_number IS NULL THEN NULL
+                   WHEN re.barrier_number <= GREATEST(1, CEIL(COUNT(*) OVER () / 3.0)) THEN 'inside_third'
+                   WHEN re.barrier_number <= GREATEST(2, CEIL((COUNT(*) OVER () * 2) / 3.0)) THEN 'middle_third'
+                   ELSE 'outside_third'
+               END AS relative_barrier
+        FROM race_entries re
+        JOIN runners run ON run.id = re.runner_id
+        WHERE re.race_id = $1
+        ORDER BY COALESCE(re.barrier_number, 999), COALESCE(re.saddle_cloth, '')
+        """,
+        race_id,
+    )
+
+    stats = await fetch_all(
+        request,
+        """
+        SELECT barrier_number, total_runners, wins, places, win_rate, place_rate
+        FROM barrier_statistics
+        WHERE LOWER(track_name) = LOWER($1)
+          AND surface = COALESCE($2, surface)
+          AND ($3::text IS NULL OR condition_category = $3)
+        ORDER BY barrier_number
+        """,
+        race["track_name"],
+        race["surface"],
+        race["condition_category"],
+    )
+    stat_lookup = {row["barrier_number"]: row for row in stats}
+
     return BarrierContextResponse(
         race_id=race_id,
-        track_name=None,
-        condition_code=None,
-        entries=[],
+        track_name=race["track_name"],
+        condition_code=race["condition_code"],
+        entries=[
+            BarrierEntry(
+                saddle_cloth=row["saddle_cloth"] or "",
+                runner_name=row["runner_name"],
+                barrier_number=row["barrier_number"],
+                field_size=row["field_size"],
+                relative_barrier=row["relative_barrier"],
+                barrier_stats=stat_lookup.get(row["barrier_number"]),
+            )
+            for row in entries
+        ],
     )
+
+
+def _group_odds_rows(rows: list[dict[str, Any]], anchor: datetime | None) -> list[dict[str, Any]]:
+    grouped: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        entry = grouped.setdefault(
+            row["race_entry_id"],
+            {
+                "race_entry_id": row["race_entry_id"],
+                "saddle_cloth": row["saddle_cloth"],
+                "runner_name": row["runner_name"],
+                "snapshots": [],
+            },
+        )
+        if row["captured_at"] is not None:
+            offset_ms = int((row["captured_at"] - anchor).total_seconds() * 1000) if anchor else 0
+            entry["snapshots"].append(
+                {
+                    "captured_at": row["captured_at"],
+                    "offset_ms": offset_ms,
+                    "win_price": float(row["win_price"]) if row["win_price"] is not None else None,
+                    "place_price": float(row["place_price"]) if row["place_price"] is not None else None,
+                    "source": row["source"],
+                }
+            )
+    return list(grouped.values())
+
+
+def _coerce_movement(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "runner_name": row["runner_name"],
+        "saddle_cloth": row["saddle_cloth"],
+        "movement_type": row["movement_type"],
+        "from_price": float(row["from_price"]),
+        "to_price": float(row["to_price"]),
+        "movement_pct": float(row["movement_pct"]),
+        "detected_at": row["detected_at"],
+        "time_to_jump_s": row["time_to_jump_s"],
+    }

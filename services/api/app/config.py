@@ -26,5 +26,9 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["*"]
 
+    # Assistant / LLM
+    openai_api_key: str = ""
+    betman_llm_model: str = "gpt-4o-mini"
+
 
 settings = Settings()

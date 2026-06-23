@@ -119,6 +119,42 @@ uvicorn app.main:app --reload
 
 The API will be available at `http://localhost:8000`. The OpenAPI docs are at `http://localhost:8000/docs`.
 
+### Data Viewer / Webapp
+
+The repository now includes a React + TypeScript + Vite **Data Viewer** at
+`services/webapp/`. It provides six tabs for:
+
+- warehouse overview / database sizes
+- meetings and races for the day
+- market signals
+- gates / track heatmaps
+- trainer and jockey win-rate boards
+- Ask BETMAN natural-language exact search
+
+Run the full stack with:
+
+```bash
+docker compose up --build
+```
+
+Endpoints:
+
+- API: `http://localhost:8000/v1`
+- Data Viewer: `http://localhost:8080`
+
+For standalone frontend development:
+
+```bash
+cd services/webapp
+npm install
+npm run dev
+```
+
+Optional frontend env vars:
+
+- `VITE_API_BASE_URL` (defaults to `http://localhost:8000/v1`)
+- `VITE_API_BEARER_TOKEN` (only needed when bypassing the nginx proxy)
+
 ### Running Migrations
 
 ```bash

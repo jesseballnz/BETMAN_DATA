@@ -92,6 +92,8 @@ services:
     entrypoint: >
       /bin/sh -c "
         psql -h postgres -U betman -d betman -f /migrations/001_initial_schema.sql &&
+        psql -h postgres -U betman -d betman -f /migrations/002_intelligence_layers.sql &&
+        psql -h postgres -U betman -d betman -f /migrations/003_pedigree_and_providers.sql &&
         echo 'Migrations applied.'
       "
     restart: "no"
@@ -149,6 +151,21 @@ services:
         condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
+
+  webapp:
+    build:
+      context: ./services/webapp
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: "/api/v1"
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      API_PROXY_AUTHORIZATION: "Bearer dev-admin-key-change-in-production"
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   postgres_data:
