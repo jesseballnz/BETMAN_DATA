@@ -6,6 +6,7 @@ import 'ag-grid-community/styles/ag-grid.css'
 import 'ag-grid-community/styles/ag-theme-quartz.css'
 import './index.css'
 import App from './App'
+import { ModeProvider } from './lib/ModeContext'
 
 const queryClient = new QueryClient()
 
@@ -13,7 +14,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <App />
+        <ModeProvider>
+          <App />
+        </ModeProvider>
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,
