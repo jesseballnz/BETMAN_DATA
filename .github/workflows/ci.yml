@@ -5,6 +5,9 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   python-quality:
     name: Python lint and tests
@@ -83,16 +86,31 @@ jobs:
           PGPASSWORD: betman
           ADMIN_API_KEY: ci-admin-key
           WEBAPP_READONLY_API_KEY: ci-webapp-readonly-key
+          PLATFORM_MASTER_KEY: ci-platform-master-key
         run: |
           set -euo pipefail
           admin_hash=$(python - <<'PY'
           import hashlib, os
-          print(hashlib.sha256(os.environ["ADMIN_API_KEY"].encode()).hexdigest())
+          print(
+              hashlib.pbkdf2_hmac(
+                  "sha256",
+                  os.environ["ADMIN_API_KEY"].encode(),
+                  os.environ["PLATFORM_MASTER_KEY"].encode(),
+                  600_000,
+              ).hex()
+          )
           PY
           )
           webapp_hash=$(python - <<'PY'
           import hashlib, os
-          print(hashlib.sha256(os.environ["WEBAPP_READONLY_API_KEY"].encode()).hexdigest())
+          print(
+              hashlib.pbkdf2_hmac(
+                  "sha256",
+                  os.environ["WEBAPP_READONLY_API_KEY"].encode(),
+                  os.environ["PLATFORM_MASTER_KEY"].encode(),
+                  600_000,
+              ).hex()
+          )
           PY
           )
           export PGOPTIONS="-c app.admin_api_key_hash=${admin_hash} -c app.admin_api_key_prefix=${ADMIN_API_KEY:0:8} -c app.webapp_readonly_api_key_hash=${webapp_hash} -c app.webapp_readonly_api_key_prefix=${WEBAPP_READONLY_API_KEY:0:8}"

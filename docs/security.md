@@ -21,7 +21,7 @@ BETMAN_DATA is a multi-tenant licensing platform. The highest-risk areas are:
 ### Authentication and authorization
 
 - API auth uses `Authorization: ******`
-- tenant keys are stored as SHA-256 hashes with a lookup prefix
+- tenant keys are stored as deterministic PBKDF2-HMAC hashes with a lookup prefix
 - admin routes require admin-scoped keys
 - inactive tenants, expired licenses, and expired keys are denied
 

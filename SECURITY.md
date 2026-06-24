@@ -21,7 +21,7 @@ Do not post secrets, exploit payloads, or live customer data in public tickets.
 ## Authentication model
 
 - API clients authenticate with `Authorization: ******
-- Raw keys are shown once at creation time and stored only as SHA-256 hashes plus a display prefix.
+- Raw keys are shown once at creation time and stored only as deterministic PBKDF2-HMAC hashes plus a display prefix.
 - Admin access requires admin-scoped keys.
 - Request limits and quotas are enforced per tenant/path.
 

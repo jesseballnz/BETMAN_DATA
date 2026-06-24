@@ -90,11 +90,12 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?set in .env}
       ADMIN_API_KEY: ${ADMIN_API_KEY:?set in .env}
       WEBAPP_READONLY_API_KEY: ${WEBAPP_READONLY_API_KEY:?set in .env}
+      PLATFORM_MASTER_KEY: ${PLATFORM_MASTER_KEY:?set in .env}
     entrypoint: >
       /bin/sh -c "
-        export ADMIN_HASH=$$(python -c 'import hashlib, os; key = os.environ.get(\"ADMIN_API_KEY\", \"\"); print(hashlib.sha256(key.encode()).hexdigest() if key else \"\")') &&
+        export ADMIN_HASH=$$(python -c 'import hashlib, os; key = os.environ.get(\"ADMIN_API_KEY\", \"\").encode(); salt = os.environ.get(\"PLATFORM_MASTER_KEY\", \"\").encode(); print(hashlib.pbkdf2_hmac(\"sha256\", key, salt, 600000).hex() if key else \"\")') &&
         export ADMIN_PREFIX=$$(python -c 'import os; print(os.environ.get(\"ADMIN_API_KEY\", \"\")[:8])') &&
-        export WEBAPP_HASH=$$(python -c 'import hashlib, os; key = os.environ.get(\"WEBAPP_READONLY_API_KEY\", \"\"); print(hashlib.sha256(key.encode()).hexdigest() if key else \"\")') &&
+        export WEBAPP_HASH=$$(python -c 'import hashlib, os; key = os.environ.get(\"WEBAPP_READONLY_API_KEY\", \"\").encode(); salt = os.environ.get(\"PLATFORM_MASTER_KEY\", \"\").encode(); print(hashlib.pbkdf2_hmac(\"sha256\", key, salt, 600000).hex() if key else \"\")') &&
         export WEBAPP_PREFIX=$$(python -c 'import os; print(os.environ.get(\"WEBAPP_READONLY_API_KEY\", \"\")[:8])') &&
         export PGOPTIONS=\"-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX\" &&
         psql -h postgres -U ${POSTGRES_USER:?set in .env} -d ${POSTGRES_DB:?set in .env} -f /migrations/001_initial_schema.sql &&

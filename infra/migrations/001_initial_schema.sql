@@ -372,7 +372,7 @@ CREATE TABLE IF NOT EXISTS tenants (
 CREATE TABLE IF NOT EXISTS tenant_api_keys (
     id          SERIAL PRIMARY KEY,
     tenant_id   INTEGER NOT NULL REFERENCES tenants (id),
-    key_hash    TEXT UNIQUE NOT NULL, -- SHA-256 of the raw API key
+    key_hash    TEXT UNIQUE NOT NULL, -- deterministic PBKDF2-HMAC hash of the raw API key
     key_prefix  TEXT NOT NULL,        -- first 8 chars of raw key (for UI display)
     label       TEXT,
     is_admin    BOOLEAN NOT NULL DEFAULT false,

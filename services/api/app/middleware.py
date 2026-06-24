@@ -156,7 +156,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
 
 def hash_api_key(api_key: str) -> str:
-    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    salt = settings.platform_master_key.encode("utf-8")
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        api_key.encode("utf-8"),
+        salt,
+        600_000,
+    ).hex()
 
 
 def api_key_prefix(api_key: str) -> str:
