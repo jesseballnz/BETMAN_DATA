@@ -25,7 +25,7 @@ import {
 } from './lib/api'
 import {
   DEMO_ANSWERS,
-  DEMO_ASK_EXAMPLES,
+  DEMO_EXAMPLE_QUESTIONS,
   DEMO_BARRIERS,
   DEMO_DRIFTERS,
   DEMO_HEATMAP,
@@ -450,17 +450,22 @@ function SignalsView() {
             {/* Alpha / Value leaderboard */}
             <div>
               <p className="mb-3 text-sm font-medium text-slate-300">Alpha leaderboard — top-scored runners today</p>
-              <div className="space-y-2">
+              <div className="space-y-2" role="list" aria-label="Alpha leaderboard — top-scored runners today">
                 {topIntelScores.slice(0, 6).map((horse, index) => {
                   const edge = (horse.betman_probability ?? 0) - (horse.implied_probability ?? 0)
                   const edgePositive = edge > 0
                   return (
-                    <div key={horse.race_entry_id} className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
-                      <span className="w-5 text-xs font-bold text-cyan-500">#{index + 1}</span>
+                    <div
+                      key={horse.race_entry_id}
+                      className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2"
+                      role="listitem"
+                      aria-label={`${horse.runner_name}, alpha score ${horse.alpha_score?.toFixed(1) ?? 'N/A'}, edge ${edgePositive ? '+' : ''}${edge.toFixed(1)}%`}
+                    >
+                      <span className="w-5 text-xs font-bold text-cyan-500" aria-hidden="true">#{index + 1}</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-sm font-semibold text-white">{horse.runner_name}</span>
-                          <span className="shrink-0 text-xs text-slate-400">α {horse.alpha_score?.toFixed(1)}</span>
+                          <h4 className="truncate text-sm font-semibold text-white">{horse.runner_name}</h4>
+                          <span className="shrink-0 text-xs text-slate-400" aria-label={`Alpha score ${horse.alpha_score?.toFixed(1) ?? 'N/A'}`}>α {horse.alpha_score?.toFixed(1)}</span>
                         </div>
                         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
                           <div
@@ -758,7 +763,7 @@ function PeopleView() {
 
 function AskBetmanView() {
   const { mode } = useMode()
-  const [question, setQuestion] = useState(DEMO_ASK_EXAMPLES[0])
+  const [question, setQuestion] = useState(DEMO_EXAMPLE_QUESTIONS[0])
   const [activeQuery, setActiveQuery] = useState('')
   const [demoResult, setDemoResult] = useState<AssistantResponse | undefined>(undefined)
   const [isThinking, setIsThinking] = useState(false)
@@ -789,7 +794,7 @@ function AskBetmanView() {
       setTimeout(() => {
         const q = question.trim().toLowerCase()
         const match = Object.entries(DEMO_ANSWERS).find(([key]) => key.toLowerCase() === q)
-        const result = match ? match[1] : DEMO_ANSWERS[DEMO_ASK_EXAMPLES[0]]
+        const result = match ? match[1] : DEMO_ANSWERS[DEMO_EXAMPLE_QUESTIONS[0]]
         setDemoResult({ ...result, question })
         setIsThinking(false)
       }, 1600)
@@ -816,7 +821,7 @@ function AskBetmanView() {
           <Button onClick={runQuery} disabled={isPending}>{isPending ? 'Analysing…' : 'Ask BETMAN'}</Button>
         </div>
         <div className="flex flex-wrap gap-2">
-          {DEMO_ASK_EXAMPLES.map((example) => (
+          {DEMO_EXAMPLE_QUESTIONS.map((example) => (
             <button
               key={example}
               type="button"

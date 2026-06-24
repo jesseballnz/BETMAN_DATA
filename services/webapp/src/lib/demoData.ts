@@ -337,7 +337,7 @@ export const DEMO_SIGNAL_PERFORMANCE: SignalPerformanceItem[] = [
 // Ask BETMAN – scripted answers
 // ---------------------------------------------------------------------------
 
-export const DEMO_ASK_EXAMPLES = [
+export const DEMO_EXAMPLE_QUESTIONS = [
   "today's steamers",
   "best barrier on a heavy 10 at Ellerslie over 1400m",
   "which trainers are over-performing the market this week",
