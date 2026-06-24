@@ -13,6 +13,11 @@
 CREATE EXTENSION IF NOT EXISTS vector;      -- pgvector: embedding similarity search
 CREATE EXTENSION IF NOT EXISTS pg_trgm;     -- trigram: fast LIKE/ILIKE search on text fields
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- =============================================================================
 -- DOMAIN 1: Racing Entities
 -- =============================================================================
@@ -744,10 +749,19 @@ INSERT INTO race_classes (code, "group", rank, description) VALUES
 ON CONFLICT (code) DO NOTHING;
 
 -- Default feeds
-INSERT INTO feeds (name, url) VALUES
-    ('Trackside 1', 'https://trackside-nz.akamaized.net/hls/live/2115595/Trackside1/OnDemand/master.m3u8'),
-    ('Trackside 2', 'https://trackside-nz.akamaized.net/hls/live/2115596/Trackside2/OnDemand/master.m3u8')
-ON CONFLICT DO NOTHING;
+INSERT INTO feeds (name, url)
+SELECT seed.name, seed.url
+FROM (
+    VALUES
+        ('Trackside 1', 'https://trackside-nz.akamaized.net/hls/live/2115595/Trackside1/OnDemand/master.m3u8'),
+        ('Trackside 2', 'https://trackside-nz.akamaized.net/hls/live/2115596/Trackside2/OnDemand/master.m3u8')
+) AS seed(name, url)
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM feeds f
+    WHERE f.name = seed.name
+      AND f.url = seed.url
+);
 
 -- Ad slot types
 INSERT INTO ad_slot_types (code, description, dimensions, display_context) VALUES
@@ -758,3 +772,6 @@ INSERT INTO ad_slot_types (code, description, dimensions, display_context) VALUE
     ('commentary_interstitial','Full-screen between commentary clips', '640x480', 'replay'),
     ('live_overlay_bug',       'Persistent bug overlay during live',   '120x60',  'live')
 ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO schema_migrations (version) VALUES ('001_initial_schema.sql')
+ON CONFLICT (version) DO NOTHING;

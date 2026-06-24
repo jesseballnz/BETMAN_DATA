@@ -24,4 +24,4 @@ Environment variables:
 ## Docker / compose
 
 The production container builds the Vite app and serves it with nginx on port `8080`.
-In `docker compose`, nginx proxies `/api/*` to the FastAPI service and injects the dev bearer token server-side so the browser bundle does not need to expose it.
+In `docker compose`, nginx proxies `/api/*` and `/api/v1/live/*` to the FastAPI service and injects a **read-only tenant bearer token** server-side so the browser bundle does not need to expose it. Never use the admin key as the proxy credential.

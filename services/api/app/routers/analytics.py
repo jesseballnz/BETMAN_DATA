@@ -167,7 +167,7 @@ async def _get_people_rates(
             ORDER BY CASE WHEN tcr.race_id = r.id THEN 0 ELSE 1 END, recorded_at DESC
             LIMIT 1
         ) tc ON TRUE
-        WHERE {' AND '.join(clauses)}
+        WHERE {" AND ".join(clauses)}
         """,
         *params,
     )

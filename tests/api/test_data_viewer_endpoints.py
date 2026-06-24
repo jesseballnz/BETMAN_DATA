@@ -32,7 +32,9 @@ def test_data_viewer_endpoints_empty_safe():
     ]
 
     for method, path in checks:
-        response = client.request(method, path, headers=AUTH if path != "/v1/health" else None)
+        response = client.request(
+            method, path, headers=AUTH if path != "/v1/health" else None
+        )
         assert response.status_code == 200, path
 
     assistant = client.post(

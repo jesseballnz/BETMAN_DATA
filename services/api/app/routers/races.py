@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -12,7 +12,7 @@ from app.db import fetch_all, fetch_row
 router = APIRouter(prefix="/races", tags=["races"])
 
 
-class ReplayFrameType(str, Enum):
+class ReplayFrameType(StrEnum):
     commentary = "commentary"
     event = "event"
     odds_update = "odds_update"
@@ -399,7 +399,9 @@ async def get_race_odds(request: Request, race_id: int):
     }
 
 
-@router.get("/{race_id}/odds-drift", response_model=OddsDriftResponse, summary="Odds drift time series")
+@router.get(
+    "/{race_id}/odds-drift", response_model=OddsDriftResponse, summary="Odds drift time series"
+)
 async def get_odds_drift(
     request: Request,
     race_id: int,
@@ -438,11 +440,22 @@ async def get_odds_drift(
         """,
         *params,
     )
-    entries = [OddsEntryDrift(**entry) for entry in _group_odds_rows(rows, race["actual_start_time"] or race["scheduled_start_time"])]
-    return OddsDriftResponse(race_id=race_id, actual_start_time=race["actual_start_time"], entries=entries)
+    entries = [
+        OddsEntryDrift(**entry)
+        for entry in _group_odds_rows(
+            rows, race["actual_start_time"] or race["scheduled_start_time"]
+        )
+    ]
+    return OddsDriftResponse(
+        race_id=race_id, actual_start_time=race["actual_start_time"], entries=entries
+    )
 
 
-@router.get("/{race_id}/odds-analysis", response_model=OddsAnalysisResponse, summary="Odds intelligence analysis")
+@router.get(
+    "/{race_id}/odds-analysis",
+    response_model=OddsAnalysisResponse,
+    summary="Odds intelligence analysis",
+)
 async def get_odds_analysis(request: Request, race_id: int):
     race = await fetch_row(
         request,
@@ -531,8 +544,12 @@ async def get_odds_analysis(request: Request, race_id: int):
                 race_entry_id=row["race_entry_id"],
                 runner_name=row["runner_name"],
                 saddle_cloth=row["saddle_cloth"],
-                opening_price=float(row["opening_price"]) if row["opening_price"] is not None else None,
-                closing_price=float(row["closing_price"]) if row["closing_price"] is not None else None,
+                opening_price=float(row["opening_price"])
+                if row["opening_price"] is not None
+                else None,
+                closing_price=float(row["closing_price"])
+                if row["closing_price"] is not None
+                else None,
                 min_price=float(row["min_price"]) if row["min_price"] is not None else None,
                 max_price=float(row["max_price"]) if row["max_price"] is not None else None,
                 total_movement_pct=row["total_movement_pct"],
@@ -553,7 +570,9 @@ async def get_odds_analysis(request: Request, race_id: int):
     )
 
 
-@router.get("/{race_id}/excitement", response_model=ExcitementResponse, summary="Excitement time series")
+@router.get(
+    "/{race_id}/excitement", response_model=ExcitementResponse, summary="Excitement time series"
+)
 async def get_excitement(race_id: int):
     return ExcitementResponse(race_id=race_id, actual_start_time=None, samples=[])
 
@@ -568,7 +587,9 @@ async def get_race_replay(
     race_id: int,
     from_ms: int | None = Query(None, description="Start offset ms (default: first available)"),
     to_ms: int | None = Query(None, description="End offset ms"),
-    include: str = Query("commentary,events,odds,excitement", description="Comma-separated frame types"),
+    include: str = Query(
+        "commentary,events,odds,excitement", description="Comma-separated frame types"
+    ),
 ):
     return RaceReplayResponse(
         race_id=race_id,
@@ -592,7 +613,11 @@ async def get_race_highlights(race_id: int):
     return {"race_id": race_id, "clips": []}
 
 
-@router.get("/{race_id}/barrier-context", response_model=BarrierContextResponse, summary="Pre-race barrier stats")
+@router.get(
+    "/{race_id}/barrier-context",
+    response_model=BarrierContextResponse,
+    summary="Pre-race barrier stats",
+)
 async def get_barrier_context(request: Request, race_id: int):
     race = await fetch_row(
         request,
@@ -622,8 +647,12 @@ async def get_barrier_context(request: Request, race_id: int):
                COUNT(*) OVER ()::int AS field_size,
                CASE
                    WHEN re.barrier_number IS NULL THEN NULL
-                   WHEN re.barrier_number <= GREATEST(1, CEIL(COUNT(*) OVER () / 3.0)) THEN 'inside_third'
-                   WHEN re.barrier_number <= GREATEST(2, CEIL((COUNT(*) OVER () * 2) / 3.0)) THEN 'middle_third'
+                   WHEN re.barrier_number <= GREATEST(
+                       1, CEIL(COUNT(*) OVER () / 3.0)
+                   ) THEN 'inside_third'
+                   WHEN re.barrier_number <= GREATEST(
+                       2, CEIL((COUNT(*) OVER () * 2) / 3.0)
+                   ) THEN 'middle_third'
                    ELSE 'outside_third'
                END AS relative_barrier
         FROM race_entries re
@@ -687,7 +716,9 @@ def _group_odds_rows(rows: list[dict[str, Any]], anchor: datetime | None) -> lis
                     "captured_at": row["captured_at"],
                     "offset_ms": offset_ms,
                     "win_price": float(row["win_price"]) if row["win_price"] is not None else None,
-                    "place_price": float(row["place_price"]) if row["place_price"] is not None else None,
+                    "place_price": float(row["place_price"])
+                    if row["place_price"] is not None
+                    else None,
                     "source": row["source"],
                 }
             )

@@ -16,7 +16,7 @@ handled downstream by SegmentRouter + TenantRouter, not here.
 import asyncio
 import hashlib
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 
 import httpx
 import structlog

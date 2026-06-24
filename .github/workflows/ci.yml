@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  python-quality:
+    name: Python lint and tests
+    runs-on: ubuntu-latest
+    env:
+      ADMIN_API_KEY: ci-admin-key
+      PLATFORM_MASTER_KEY: ci-platform-master-key
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install API test dependencies
+        run: pip install -e "services/api[dev]"
+      - name: Ruff
+        run: python -m ruff check services/ libs/
+      - name: Pytest
+        run: python -m pytest tests -q
+
+  webapp-quality:
+    name: Webapp lint and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/webapp/package-lock.json
+      - name: Install webapp dependencies
+        working-directory: services/webapp
+        run: npm ci
+      - name: Webapp lint
+        working-directory: services/webapp
+        run: npm run lint
+      - name: Webapp build
+        working-directory: services/webapp
+        run: npm run build
+
+  migrations:
+    name: Migrations idempotency
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: betman
+          POSTGRES_USER: betman
+          POSTGRES_PASSWORD: betman
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U betman -d betman"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply migrations twice
+        env:
+          PGPASSWORD: betman
+          ADMIN_API_KEY: ci-admin-key
+          WEBAPP_READONLY_API_KEY: ci-webapp-readonly-key
+        run: |
+          set -euo pipefail
+          admin_hash=$(python - <<'PY'
+          import hashlib, os
+          print(hashlib.sha256(os.environ["ADMIN_API_KEY"].encode()).hexdigest())
+          PY
+          )
+          webapp_hash=$(python - <<'PY'
+          import hashlib, os
+          print(hashlib.sha256(os.environ["WEBAPP_READONLY_API_KEY"].encode()).hexdigest())
+          PY
+          )
+          export PGOPTIONS="-c app.admin_api_key_hash=${admin_hash} -c app.admin_api_key_prefix=${ADMIN_API_KEY:0:8} -c app.webapp_readonly_api_key_hash=${webapp_hash} -c app.webapp_readonly_api_key_prefix=${WEBAPP_READONLY_API_KEY:0:8}"
+          for _ in 1 2; do
+            psql "******localhost:5432/betman" -f infra/migrations/001_initial_schema.sql
+            psql "******localhost:5432/betman" -f infra/migrations/002_intelligence_layers.sql
+            psql "******localhost:5432/betman" -f infra/migrations/003_pedigree_and_providers.sql
+            psql "******localhost:5432/betman" -f infra/migrations/004_api_keys_and_security.sql
+          done

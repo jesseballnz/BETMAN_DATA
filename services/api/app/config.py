@@ -1,8 +1,17 @@
+from __future__ import annotations
+
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ROOT_DIR = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(ROOT_DIR / ".env", ".env"),
+        extra="ignore",
+    )
 
     api_version: str = "1.0.0"
     api_root_path: str = ""
@@ -20,15 +29,33 @@ class Settings(BaseSettings):
     cdn_base_url: str = "http://localhost:9000/betman-media"
 
     # Security
-    admin_api_key: str = "dev-admin-key-change-in-production"
+    admin_api_key: str = ""
     platform_master_key: str = ""
 
     # CORS
-    cors_origins: list[str] = ["*"]
+    cors_origins: str = "http://localhost:5173,http://localhost:8080"
+    rate_limit_requests: int = 120
+    rate_limit_window_seconds: int = 60
+    rate_limit_default_daily_quota: int = 10_000
+    websocket_heartbeat_seconds: int = 15
 
     # Assistant / LLM
     openai_api_key: str = ""
     betman_llm_model: str = "gpt-4o-mini"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        if not self.cors_origins:
+            return ["http://localhost:5173", "http://localhost:8080"]
+        return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+
+    @property
+    def cors_allow_credentials(self) -> bool:
+        return "*" not in self.cors_origins_list
+
+    @property
+    def hsts_enabled(self) -> bool:
+        return self.environment.lower() not in {"development", "dev", "local"}
 
 
 settings = Settings()

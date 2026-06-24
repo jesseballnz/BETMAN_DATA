@@ -1,202 +1,189 @@
 # BETMAN_DATA
 
-BETMAN_DATA is the data stack for the **BETMAN** platform. It ingests live racing media feeds (Trackside HLS streams), processes audio, video, and images, extracts OCR signals and commentary intelligence, stores structured racing and media metadata in a purpose-built warehouse, and exposes an internal API for querying races, runners, odds, signals, transcripts, clips, and derived events.
+BETMAN_DATA is the BETMAN horse-racing DataOS: a multi-tenant FastAPI + PostgreSQL + Redis platform for racing data, odds intelligence, skinning, compliance, metering, and live delivery, with a React 19 Data Viewer for Demo and Live modes.
 
----
+## Major capabilities
 
-## Major Capabilities
+- **Licensing + tenancy** — isolated tenant keys, scopes, branding, usage metering, and admin controls
+- **Security foundations** — hashed API keys, env-driven secrets, readiness checks, security headers, and rate limiting
+- **Skin engine** — per-tenant UI branding, feeds, ad slots, and compliance metadata
+- **Consumer nerve centre** — ingest race data, odds, feeds, and weather into the warehouse
+- **BETMAN intelligence** — market signals, discovery patterns, pedigree, stats, and assistant queries
+- **Live delivery** — `/v1/live/{feed_id}` WebSocket fanout backed by Redis pub/sub
+- **Observability** — `/v1/health`, `/v1/ready`, `/v1/metrics`, structured request logging, and audit logging
+- **Demo-ready webapp** — polished Data Viewer with bundled fixtures, Live/Demo toggle, and resilient fallbacks
 
-| Capability | Description |
-|---|---|
-| **Licensing** | License the platform to any betting or content provider with isolated tenancy and full branding control |
-| **Skin Engine** | Multi-tenant branding — per-licensee colors, logos, sponsor slots, ad placements, and custom video/audio feeds |
-| **HLS Ingestion** | Consume Trackside 1 and Trackside 2 live HLS streams, segment and store raw media |
-| **Consumer Service** | The nerve centre — single gateway for all live data: HLS feeds, race data, odds, and weather |
-| **Barrier Analysis** | Track every winner/place-getter's gate across every track, condition, and surface — query "best barrier on a heavy 10 at Ellerslie over 1400m" |
-| **Track Science** | WeatherLink API integration — temperature, humidity, multi-probe soil moisture, track conditions — feeds directly into barrier analysis |
-| **Odds Intelligence** | Record every odds movement before a race, detect steaming, drifting, and market signals — find the theory in the chaos |
-| **Media Storage** | Tiered object storage for raw segments, compressed clips, audio chunks, and keyframes |
-| **OCR** | Extract text overlays from video frames — race numbers, runner names, odds, lower-thirds, tote boards |
-| **Audio Intelligence** | VAD, commentary vs. ad classification, ASR transcription, race-event detection |
-| **Derived Race Signals** | Infer race state events (parade ring, barrier load, jump, result) from audio and visual signals |
-| **Warehouse** | Structured PostgreSQL warehouse of racing entities, media metadata, observations, and odds snapshots |
-| **Internal API** | FastAPI service exposing races, runners, signals, transcripts, odds, clips, and search |
+## Getting started in 5 minutes
 
----
+```bash
+git clone https://github.com/jesseballnz/BETMAN_DATA.git
+cd BETMAN_DATA
+cp .env.example .env
+# replace every change-me value in .env before starting
 
-## Repository Layout
+make setup
 
-```
-BETMAN_DATA/
-├── README.md                    # This file
-├── Makefile                     # Common dev tasks
-├── .gitignore
-│
-├── docs/
-│   ├── architecture.md          # Platform architecture overview
-│   ├── data-model.md            # Core entity and relationship definitions
-│   └── api-spec.md              # Internal API design draft
-│
-├── services/
-│   ├── api/                     # FastAPI internal API service
-│   │   ├── app/
-│   │   │   ├── __init__.py
-│   │   │   ├── main.py
-│   │   │   ├── config.py
-│   │   │   ├── middleware.py    # Tenant auth, request logging, usage tracking
-│   │   │   └── routers/
-│   │   │       ├── health.py
-│   │   │       ├── feeds.py
-│   │   │       ├── races.py     # replay, story, excitement, odds-drift, barriers
-│   │   │       ├── runners.py
-│   │   │       ├── tracks.py    # barrier analysis, heatmap, weather, conditions
-│   │   │       ├── events.py
-│   │   │       ├── search.py
-│   │   │       ├── skins.py     # includes tenant feed resolution
-│   │   │       └── admin.py     # tenants, skins, feeds, weather stations, API keys
-│   │   ├── pyproject.toml
-│   │   └── README.md
-│   │
-│   ├── consumer/                # THE NERVE CENTRE — live data gateway
-│   │   ├── app/
-│   │   │   ├── main.py          # Orchestrates all adapters
-│   │   │   ├── config.py
-│   │   │   ├── state.py         # Redis-backed live platform state
-│   │   │   ├── feed_manager.py  # HLS polling + segment download
-│   │   │   ├── race_adapter.py  # External race data feeds
-│   │   │   ├── odds_adapter.py  # External odds/pricing feeds
-│   │   │   ├── weather_adapter.py # WeatherLink API + soil probes
-│   │   │   ├── tenant_router.py # Routes data by tenant feed licensing
-│   │   │   └── segment_router.py # Dispatches to processing queues
-│   │   ├── pyproject.toml
-│   │   └── README.md
-│   │
-│   ├── ingest/                  # HLS ingestion worker (placeholder)
-│   ├── audio-worker/            # Audio extraction + classification (placeholder)
-│   └── ocr-worker/              # Frame extraction + OCR (placeholder)
-│
-├── libs/                        # Shared internal libraries (placeholder)
-│   ├── db/                      # DB session / ORM helpers
-│   ├── schemas/                 # Shared Pydantic schemas
-│   └── media/                   # Media utility helpers
-│
-├── infra/
-│   └── migrations/              # SQL database migrations
-│       └── 001_initial_schema.sql
-│
-└── tests/                       # Integration and unit tests (placeholder)
+# API
+open http://localhost:8000/docs
+
+# Data Viewer
+open http://localhost:8080
 ```
 
----
+`make setup` copies the root env file if needed, installs Python dependencies, starts Postgres/Redis/MinIO, and applies all migrations.
 
-## Local Development
+## Quick start
 
 ### Prerequisites
 
 - Python 3.11+
-- PostgreSQL 15+ (or Docker)
-- `make` (optional but recommended)
+- Node 22+
+- Docker + Docker Compose
+- `make`
 
-### Quick Start
+### Local API development
 
 ```bash
-# Clone the repo
-git clone https://github.com/jesseballnz/BETMAN_DATA.git
-cd BETMAN_DATA
-
-# Set up the API service
-cd services/api
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-
-# Copy and edit environment config
 cp .env.example .env
-
-# Start the API
-uvicorn app.main:app --reload
+make install
+make docker-infra
+make migrate
+make api-dev
 ```
 
-The API will be available at `http://localhost:8000`. The OpenAPI docs are at `http://localhost:8000/docs`.
+Authentication uses a bearer token in the `Authorization` header. Do **not** send the admin key to the browser; the compose webapp proxy is intended to use a read-only tenant key via `API_PROXY_AUTHORIZATION`.
 
-### Data Viewer — Demo vs Live
-
-The repository includes a React + TypeScript + Vite **Data Viewer** at `services/webapp/`. It has six tabs — Overview, Today, Signals, Gates, People, and Ask BETMAN — and ships with **bundled demo fixtures** so it works out of the box with no backend at all.
-
-#### Modes
-
-| Mode | Description | How to activate |
-|------|-------------|-----------------|
-| **Demo** (default) | All six tabs are populated from bundled sample data (`src/lib/demoData.ts`). No network calls are made. Perfect for pitches and local exploration. | App opens in Demo mode automatically. |
-| **Live** | Connects to the real API (`VITE_API_BASE_URL`, default `http://localhost:8000/v1`) and polls for live data. | Click the **Live ⇄ Demo** toggle in the header. |
-
-Your preference is saved in `localStorage` across page refreshes.
-
-#### Option A — Frontend only (Demo mode, no backend needed)
+### Local webapp development
 
 ```bash
 cd services/webapp
 npm install
 npm run dev
-# → http://localhost:5173  (opens in Demo mode)
 ```
 
-#### Option B — Full stack via Docker Compose
+- **Demo** mode uses bundled fixtures and works without the backend.
+- **Live** mode uses `VITE_API_BASE_URL` and upgrades to the WebSocket stream when available.
+
+### Required validation commands
 
 ```bash
-# From the repo root
-docker compose up --build
-# → Data Viewer:  http://localhost:8080  (opens in Demo mode)
-# → API:          http://localhost:8000/v1
-```
+python -m ruff check services/ libs/
+python -m pytest tests -q
 
-Switch the header toggle to **Live** to hit the real API once the full stack is running.
-
-#### Build & lint (CI reference)
-
-```bash
 cd services/webapp
-npm run build   # tsc -b && vite build — must pass with no errors
-npm run lint    # oxlint — must pass with no errors (warnings OK)
+npm run lint
+npm run build
 ```
 
-#### Optional env vars (frontend)
+## Repository layout
 
-| Variable | Default | Notes |
-|----------|---------|-------|
-| `VITE_API_BASE_URL` | `http://localhost:8000/v1` | API base; overridden to `/api/v1` inside Docker |
-| `VITE_API_BEARER_TOKEN` | _(unset)_ | Only needed when bypassing the nginx proxy |
+```text
+BETMAN_DATA/
+├── .github/workflows/ci.yml
+├── .env.example
+├── CONTRIBUTING.md
+├── LICENSE
+├── Makefile
+├── SECURITY.md
+├── docker-compose.yml
+├── docs/
+│   ├── api-spec.md
+│   ├── architecture.md
+│   ├── betman-scores.md
+│   ├── data-model.md
+│   ├── deployment.md
+│   ├── intelligence-layers.md
+│   ├── licensing.md
+│   ├── security.md
+│   └── use-cases/
+│       ├── api-key-metering-billing.md
+│       ├── observability-slo.md
+│       ├── realtime-websocket.md
+│       └── responsible-gambling.md
+├── infra/migrations/
+│   ├── 001_initial_schema.sql
+│   ├── 002_intelligence_layers.sql
+│   ├── 003_pedigree_and_providers.sql
+│   ├── 004_api_keys_and_security.sql
+│   └── README.md
+├── libs/
+│   └── schemas/
+├── services/
+│   ├── api/
+│   ├── audio-worker/
+│   ├── consumer/
+│   ├── discovery/
+│   ├── ingest/
+│   ├── ocr-worker/
+│   ├── scoring/
+│   └── webapp/
+└── tests/
+```
 
-### Running Migrations
+## API surface
+
+The FastAPI app currently exposes these router modules under `/v1`:
+
+- `admin`
+- `analytics`
+- `assistant`
+- `compliance`
+- `discovery`
+- `events`
+- `feeds`
+- `health`
+- `intelligence`
+- `live`
+- `market`
+- `meetings`
+- `metrics`
+- `pedigree`
+- `races`
+- `runners`
+- `search`
+- `skins`
+- `stats`
+- `tracks`
+
+## Makefile shortcuts
 
 ```bash
-# Apply migrations against a local Postgres instance
-psql $DATABASE_URL -f infra/migrations/001_initial_schema.sql
+make setup           # copy env, install deps, start infra, migrate
+make install         # install API + consumer + scoring + discovery dev deps
+make api-dev         # run FastAPI locally
+make consumer-dev    # run consumer locally
+make scoring-dev     # run scoring locally
+make discovery-dev   # run discovery locally
+make docker-infra    # start postgres, redis, minio, minio-init
+make docker-up       # start the full stack
+make migrate         # apply 001-004
+make test            # run all tests
+make test-api        # run API tests
+make test-consumer   # run consumer tests
+make lint            # run ruff
+make format          # run ruff format
+make security-check  # run ruff + simple secret pattern grep
+make status          # show docker status and API health
 ```
-
-### Makefile Shortcuts
-
-```bash
-make api-dev       # Run the API in dev mode
-make migrate       # Apply migrations
-make test          # Run tests
-make lint          # Run ruff linter
-make format        # Format code with ruff + black
-```
-
----
-
-## Feeds
-
-| Feed | URL |
-|---|---|
-| Trackside 1 | `https://trackside-nz.akamaized.net/hls/live/2115595/Trackside1/OnDemand/master.m3u8` |
-| Trackside 2 | `https://trackside-nz.akamaized.net/hls/live/2115596/Trackside2/OnDemand/master.m3u8` |
-
----
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
-- [Data Model](docs/data-model.md)
-- [API Spec](docs/api-spec.md)
+- [Data model](docs/data-model.md)
+- [API spec](docs/api-spec.md)
+- [Deployment](docs/deployment.md)
+- [BETMAN scores](docs/betman-scores.md)
+- [Intelligence layers](docs/intelligence-layers.md)
+- [Licensing](docs/licensing.md)
+- [Security deep dive](docs/security.md)
+- [Use case: Responsible gambling](docs/use-cases/responsible-gambling.md)
+- [Use case: API key metering and billing](docs/use-cases/api-key-metering-billing.md)
+- [Use case: Real-time WebSocket](docs/use-cases/realtime-websocket.md)
+- [Use case: Observability and SLOs](docs/use-cases/observability-slo.md)
+
+## Pass 1 highlights
+
+- **Security**: committed secrets removed from compose, hashed tenant key lookup implemented, CORS tightened, security headers and rate limiting added
+- **System readiness**: CI workflow added, migrations made re-runnable with tracking, offline API tests expanded, readiness/metrics endpoints added
+- **UI/UX**: error boundary, onboarding hint, connection status, accessible Today race controls, and live-mode fallback messaging
+- **New use cases**: compliance guardrails, API key metering/billing, authenticated live WebSocket streaming, and observability/SLO foundations

@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.assistant_service import resolve_plan
+from app.compliance import RG_DISCLAIMER
 from app.db import execute_readonly_query
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -41,4 +42,5 @@ async def query_assistant(request: Request, payload: AssistantQueryRequest):
         "summary": summary,
         "confidence": plan.confidence,
         "chart": plan.chart or {"type": "table"},
+        "disclaimer": RG_DISCLAIMER,
     }

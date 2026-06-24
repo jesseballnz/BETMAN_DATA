@@ -88,8 +88,13 @@ async def list_tracks(request: Request):
             MAX(barrier_sample_size)::int AS barrier_sample_size,
             MAX(heatmap_cell_count)::int AS heatmap_cell_count
         FROM (
-            SELECT m.track_name, m.surface, COUNT(DISTINCT r.id) AS race_count,
-                   COUNT(DISTINCT m.id) AS meeting_count, 0 AS barrier_sample_size, 0 AS heatmap_cell_count
+            SELECT
+                m.track_name,
+                m.surface,
+                COUNT(DISTINCT r.id) AS race_count,
+                COUNT(DISTINCT m.id) AS meeting_count,
+                0 AS barrier_sample_size,
+                0 AS heatmap_cell_count
             FROM meetings m
             LEFT JOIN races r ON r.meeting_id = m.id
             GROUP BY m.track_name, m.surface
@@ -109,7 +114,11 @@ async def list_tracks(request: Request):
     return {"tracks": rows}
 
 
-@router.get("/{track_name}/barriers", response_model=BarrierAnalysisResponse, summary="Barrier win/place statistics")
+@router.get(
+    "/{track_name}/barriers",
+    response_model=BarrierAnalysisResponse,
+    summary="Barrier win/place statistics",
+)
 async def get_barrier_analysis(
     request: Request,
     track_name: str,
@@ -157,13 +166,22 @@ async def get_barrier_analysis(
                 COUNT(*)::int AS total_runners,
                 COUNT(*) FILTER (WHERE won)::int AS wins,
                 COUNT(*) FILTER (WHERE placed)::int AS places,
-                ROUND(COUNT(*) FILTER (WHERE won)::numeric * 100.0 / NULLIF(COUNT(*), 0), 2)::float AS win_rate,
-                ROUND(COUNT(*) FILTER (WHERE placed)::numeric * 100.0 / NULLIF(COUNT(*), 0), 2)::float AS place_rate
+                ROUND(
+                    COUNT(*) FILTER (WHERE won)::numeric * 100.0 / NULLIF(COUNT(*), 0),
+                    2
+                )::float AS win_rate,
+                ROUND(
+                    COUNT(*) FILTER (WHERE placed)::numeric * 100.0 / NULLIF(COUNT(*), 0),
+                    2
+                )::float AS place_rate
             FROM barrier_outcomes
-            WHERE {' AND '.join(clauses)}
+            WHERE {" AND ".join(clauses)}
             GROUP BY barrier_number
         )
-        SELECT *, RANK() OVER (ORDER BY win_rate DESC, total_runners DESC, barrier_number) AS rank_by_win_rate
+        SELECT *,
+               RANK() OVER (
+                   ORDER BY win_rate DESC, total_runners DESC, barrier_number
+               ) AS rank_by_win_rate
         FROM aggregated
         ORDER BY barrier_number
         """,
@@ -188,7 +206,9 @@ async def get_barrier_analysis(
     )
 
 
-@router.get("/{track_name}/heatmap", response_model=HeatmapResponse, summary="Spatial barrier heat map")
+@router.get(
+    "/{track_name}/heatmap", response_model=HeatmapResponse, summary="Spatial barrier heat map"
+)
 async def get_heatmap(
     request: Request,
     track_name: str,
@@ -212,7 +232,7 @@ async def get_heatmap(
                COALESCE(place_rate, 0)::float AS place_rate,
                COALESCE(intensity, 0)::float AS intensity
         FROM track_heatmap_cells
-        WHERE {' AND '.join(clauses)}
+        WHERE {" AND ".join(clauses)}
         ORDER BY zone, distance_from_finish_band NULLS LAST
         """,
         *params,
@@ -226,7 +246,11 @@ async def get_heatmap(
     )
 
 
-@router.get("/{track_name}/weather", response_model=WeatherResponse, summary="Live weather and soil moisture")
+@router.get(
+    "/{track_name}/weather",
+    response_model=WeatherResponse,
+    summary="Live weather and soil moisture",
+)
 async def get_weather(
     request: Request,
     track_name: str,
@@ -235,11 +259,19 @@ async def get_weather(
 ):
     station = await fetch_row(
         request,
-        "SELECT id, label FROM weather_stations WHERE LOWER(track_name) = LOWER($1) AND active = true ORDER BY id LIMIT 1",
+        """
+        SELECT id, label
+        FROM weather_stations
+        WHERE LOWER(track_name) = LOWER($1) AND active = true
+        ORDER BY id
+        LIMIT 1
+        """,
         track_name,
     )
     if station is None:
-        return WeatherResponse(track_name=track_name, station_label=None, current=None, soil_moisture=[], history=[])
+        return WeatherResponse(
+            track_name=track_name, station_label=None, current=None, soil_moisture=[], history=[]
+        )
 
     history_params: list[Any] = [station["id"]]
     history_clause = ""
@@ -280,12 +312,16 @@ async def get_weather(
         track_name=track_name,
         station_label=station["label"],
         current=current,
-        soil_moisture=[SoilMoistureReading(**row) for row in soil if row["moisture_pct"] is not None],
+        soil_moisture=[
+            SoilMoistureReading(**row) for row in soil if row["moisture_pct"] is not None
+        ],
         history=history,
     )
 
 
-@router.get("/{track_name}/conditions", response_model=ConditionsResponse, summary="Track condition ratings")
+@router.get(
+    "/{track_name}/conditions", response_model=ConditionsResponse, summary="Track condition ratings"
+)
 async def get_conditions(request: Request, track_name: str):
     rows = await fetch_all(
         request,

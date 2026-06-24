@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ColDef, ValueGetterParams } from 'ag-grid-community'
-import { useMutation, useQueries, useQuery } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import ReactECharts from 'echarts-for-react'
 import { Database, Gauge, Map, Search, Sparkles, Users } from 'lucide-react'
@@ -13,8 +13,10 @@ import { Select } from './components/ui/select'
 import {
   POLLING_INTERVALS,
   api,
+  buildLiveWebSocketUrl,
   type AssistantResponse,
   type BarrierResponse,
+  type HealthResponse,
   type HeatmapResponse,
   type HorseScores,
   type OddsResponse,
@@ -72,6 +74,31 @@ function getSignalType(item: { signal_type?: string; indicator_type?: string; pa
 
 function App() {
   const { mode, setMode } = useMode()
+  const queryClient = useQueryClient()
+  const [hintDismissed, setHintDismissed] = useState(() => {
+    try {
+      return localStorage.getItem('betman_mode_hint_dismissed') === 'true'
+    } catch {
+      return false
+    }
+  })
+  const health = useQuery({
+    queryKey: ['health', mode],
+    queryFn: api.getHealth,
+    enabled: mode === 'live',
+    refetchInterval: mode === 'live' ? 15000 : false,
+    staleTime: 0,
+    retry: false,
+  })
+  const liveSocket = useLiveSocket(mode, queryClient)
+
+  const dismissHint = () => {
+    setHintDismissed(true)
+    try {
+      localStorage.setItem('betman_mode_hint_dismissed', 'true')
+    } catch {}
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-4 sm:px-6 lg:px-8">
@@ -84,12 +111,16 @@ function App() {
                 <p className="text-sm text-slate-400">Live command center for finding order in market chaos.</p>
               </div>
               <div className="flex flex-col items-start gap-1.5">
-                <div className="flex rounded-lg border border-slate-700 bg-slate-900 p-0.5">
+                <div className="flex rounded-lg border border-slate-700 bg-slate-900 p-0.5" role="tablist" aria-label="Demo and Live mode">
                   <button
                     type="button"
                     onClick={() => setMode('demo')}
+                    role="tab"
+                    aria-selected={mode === 'demo'}
+                    aria-pressed={mode === 'demo'}
+                    aria-label="Switch to Demo mode"
                     className={cn(
-                      'rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-widest transition duration-200',
+                      'rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-widest transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400',
                       mode === 'demo'
                         ? 'bg-cyan-500 text-slate-950 shadow-[0_0_12px_rgba(34,211,238,0.5)]'
                         : 'text-slate-400 hover:text-slate-200',
@@ -100,8 +131,12 @@ function App() {
                   <button
                     type="button"
                     onClick={() => setMode('live')}
+                    role="tab"
+                    aria-selected={mode === 'live'}
+                    aria-pressed={mode === 'live'}
+                    aria-label="Switch to Live mode"
                     className={cn(
-                      'rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-widest transition duration-200',
+                      'rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-widest transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400',
                       mode === 'live'
                         ? 'bg-emerald-500 text-slate-950 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
                         : 'text-slate-400 hover:text-slate-200',
@@ -117,7 +152,7 @@ function App() {
                 )}
                 {mode === 'live' && (
                   <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-400 ring-1 ring-emerald-500/30">
-                    ● Live — polling API
+                    ● Live — {liveSocket.connected ? 'socket + polling fallback' : 'polling API'}
                   </span>
                 )}
               </div>
@@ -142,6 +177,35 @@ function App() {
               ))}
             </nav>
           </div>
+          <div className="mt-4 flex flex-col gap-3">
+            <ConnectionStatus mode={mode} socketConnected={liveSocket.connected} health={health.data} error={health.error as Error | null} />
+            {!hintDismissed ? (
+              <div className="flex items-start justify-between gap-3 rounded-xl border border-cyan-900/40 bg-slate-900/80 px-4 py-3 text-sm text-slate-300">
+                <p>
+                  <span className="font-semibold text-cyan-300">First run:</span> Demo mode uses bundled fixtures for pitches and onboarding.
+                  Switch to Live when your API and proxy key are ready.
+                </p>
+                <button
+                  type="button"
+                  onClick={dismissHint}
+                  className="shrink-0 rounded-md border border-slate-700 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-slate-300 transition hover:border-slate-500 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                >
+                  Dismiss
+                </button>
+              </div>
+            ) : null}
+            {mode === 'live' && health.error ? (
+              <EmptyState
+                title="API unreachable — Live mode is empty"
+                description="The API health check failed. Switch back to Demo mode for bundled fixtures while the platform comes online."
+                action={
+                  <Button type="button" onClick={() => setMode('demo')}>
+                    Switch to Demo
+                  </Button>
+                }
+              />
+            ) : null}
+          </div>
         </header>
 
         <main className="flex-1 pb-8">
@@ -154,6 +218,9 @@ function App() {
             <Route path="/ask" element={<AskBetmanView />} />
           </Routes>
         </main>
+        <footer className="border-t border-slate-800/80 pt-4 text-xs text-slate-500">
+          BETMAN provides racing data and insights, not betting advice. Wager responsibly and only where lawful.
+        </footer>
       </div>
     </div>
   )
@@ -301,17 +368,21 @@ function TodayView() {
   return (
     <div className="space-y-4">
       <SectionHeader title="Today" subtitle="Meetings, fields, and near-live market movement." />
+      <ErrorBanner error={(meetingsQuery.error as Error | null) ?? (racesQuery.error as Error | null) ?? (raceDetail.error as Error | null) ?? (odds.error as Error | null)} />
       <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
         <Card>
           <PanelTitle title="Meetings by track" subtitle={today} />
           <div className="mt-4 space-y-3">
-            {meetingsQuery.data?.meetings.length ? (
+            {meetingsQuery.isLoading ? (
+              <LoadingTile />
+            ) : meetingsQuery.data?.meetings.length ? (
               meetingsQuery.data.meetings.map((meeting) => (
                 <button
                   key={meeting.id}
                   type="button"
                   onClick={() => setSelectedRaceId(meeting.races[0]?.id ?? null)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900/80 p-3 text-left transition hover:border-cyan-500"
+                  aria-label={`Open ${meeting.track_name} meeting`}
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900/80 p-3 text-left transition hover:border-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                 >
                   <div className="flex items-center justify-between">
                     <div>
@@ -320,18 +391,21 @@ function TodayView() {
                     </div>
                     <div className="text-sm text-cyan-300">{meeting.race_count} races</div>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400" role="list" aria-label={`${meeting.track_name} races`}>
                     {meeting.races.map((race) => (
-                      <span
+                      <button
                         key={race.id}
-                        className="rounded bg-slate-800 px-2 py-1"
+                        type="button"
+                        role="listitem"
+                        aria-label={`Select race ${race.race_number} ${race.name ?? 'Unnamed'}`}
+                        className="rounded bg-slate-800 px-2 py-1 transition hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                         onClick={(event) => {
                           event.stopPropagation()
                           setSelectedRaceId(race.id)
                         }}
                       >
                         R{race.race_number} {race.name ?? 'Unnamed'}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 </button>
@@ -344,24 +418,30 @@ function TodayView() {
         <Card>
           <PanelTitle title={raceDetail.data?.name ?? 'Race detail'} subtitle={raceDetail.data?.meeting.track_name ?? 'Select a race'} />
           <div className="mt-4 h-[220px]">
-            <Grid
-              rows={raceDetail.data?.entries ?? []}
-              columns={[
-                { field: 'barrier_number', headerName: 'Barrier' },
-                {
-                  field: 'runner.name',
-                  headerName: 'Runner',
-                  valueGetter: (params: ValueGetterParams<Record<string, unknown>>) =>
-                    (params.data as RaceDetail['entries'][number] | undefined)?.runner.name ?? '',
-                },
-                { field: 'jockey_or_driver', headerName: 'Jockey' },
-                { field: 'trainer', headerName: 'Trainer' },
-                { field: 'weight_kg', headerName: 'Wt' },
-              ]}
-            />
+            {raceDetail.isLoading ? (
+              <ChartSkeleton />
+            ) : raceDetail.data?.entries?.length ? (
+              <Grid
+                rows={raceDetail.data?.entries ?? []}
+                columns={[
+                  { field: 'barrier_number', headerName: 'Barrier' },
+                  {
+                    field: 'runner.name',
+                    headerName: 'Runner',
+                    valueGetter: (params: ValueGetterParams<Record<string, unknown>>) =>
+                      (params.data as RaceDetail['entries'][number] | undefined)?.runner.name ?? '',
+                  },
+                  { field: 'jockey_or_driver', headerName: 'Jockey' },
+                  { field: 'trainer', headerName: 'Trainer' },
+                  { field: 'weight_kg', headerName: 'Wt' },
+                ]}
+              />
+            ) : (
+              <EmptyState title="No race selected" description="Choose a meeting or race chip to view runners and market drift." />
+            )}
           </div>
           <div className="mt-4 h-[260px]">
-            <ReactECharts option={buildOddsChart(odds.data)} style={{ height: '100%' }} />
+            {odds.isLoading ? <ChartSkeleton /> : <ReactECharts option={buildOddsChart(odds.data)} style={{ height: '100%' }} />}
           </div>
         </Card>
       </div>
@@ -1049,16 +1129,58 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle: string })
   )
 }
 
+function ConnectionStatus({
+  mode,
+  socketConnected,
+  health,
+  error,
+}: {
+  mode: 'demo' | 'live'
+  socketConnected: boolean
+  health?: HealthResponse
+  error: Error | null
+}) {
+  if (mode === 'demo') {
+    return <div className="text-xs uppercase tracking-[0.25em] text-cyan-400">Demo mode — bundled fixtures active</div>
+  }
+
+  const connected = !error && health?.status === 'ok'
+  return (
+    <div
+      className={cn(
+        'inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em]',
+        connected
+          ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30'
+          : 'bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30',
+      )}
+    >
+      <span aria-hidden="true">{connected ? '●' : '○'}</span>
+      {connected
+        ? `Live connected${socketConnected ? ' via websocket' : ' via polling'}`
+        : 'Live API unreachable'}
+    </div>
+  )
+}
+
 function ErrorBanner({ error }: { error: Error | null }) {
   if (!error) return null
   return <div className="rounded-lg border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-200">{error.message}</div>
 }
 
-function EmptyState({ title, description }: { title: string; description: string }) {
+function EmptyState({
+  title,
+  description,
+  action,
+}: {
+  title: string
+  description: string
+  action?: ReactNode
+}) {
   return (
     <div className="rounded-lg border border-dashed border-slate-700 bg-slate-900/30 p-4">
       <div className="text-sm font-medium text-white">{title}</div>
       <p className="mt-1 text-sm text-slate-400">{description}</p>
+      {action ? <div className="mt-3">{action}</div> : null}
     </div>
   )
 }
@@ -1069,6 +1191,31 @@ function ChartSkeleton() {
 
 function LoadingTile() {
   return <div className="h-[86px] animate-pulse rounded-lg border border-slate-800 bg-slate-900/60" />
+}
+
+function useLiveSocket(mode: 'demo' | 'live', queryClient: ReturnType<typeof useQueryClient>) {
+  const [connected, setConnected] = useState(false)
+
+  useEffect(() => {
+    if (mode !== 'live') {
+      setConnected(false)
+      return
+    }
+
+    const socket = new WebSocket(buildLiveWebSocketUrl(1))
+    socket.onopen = () => setConnected(true)
+    socket.onclose = () => setConnected(false)
+    socket.onerror = () => setConnected(false)
+    socket.onmessage = () => {
+      queryClient.invalidateQueries({ queryKey: ['meetings'] })
+      queryClient.invalidateQueries({ queryKey: ['races'] })
+      queryClient.invalidateQueries({ queryKey: ['stats-overview'] })
+    }
+
+    return () => socket.close()
+  }, [mode, queryClient])
+
+  return { connected }
 }
 
 function buildWarehouseChart(data?: StatsOverview) {

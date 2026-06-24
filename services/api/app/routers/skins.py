@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from app.compliance import get_compliance_rule
+
 router = APIRouter(prefix="/skins", tags=["skins"])
 
 
@@ -27,6 +29,16 @@ class TenantFeed(BaseModel):
     quality: str
 
 
+class SkinCompliance(BaseModel):
+    jurisdiction: str
+    age_gate_minimum: int
+    responsible_gambling_message: str
+    support_url: str
+    support_phone: str
+    advisory: str
+    product_positioning: str
+
+
 class SkinResponse(BaseModel):
     tenant: str
     skin_id: int
@@ -37,6 +49,7 @@ class SkinResponse(BaseModel):
     assets: SkinAssets
     active_ads: list[ActiveAd]
     feeds: list[TenantFeed]
+    compliance: SkinCompliance
 
 
 @router.get("/{tenant_slug}", response_model=SkinResponse, summary="Resolve tenant skin")
@@ -58,6 +71,7 @@ async def resolve_skin(
     # TODO: query tenants + skins + skin_contexts with priority resolution
     # TODO: resolve active ads from ad_placements
     # TODO: resolve tenant_feeds for this tenant
+    compliance = get_compliance_rule("NZ")
     return SkinResponse(
         tenant=tenant_slug,
         skin_id=0,
@@ -75,10 +89,12 @@ async def resolve_skin(
                 "live_websocket": True,
                 "show_odds": True,
             },
+            "compliance": compliance,
         },
         assets=SkinAssets(),
         active_ads=[],
         feeds=[],
+        compliance=SkinCompliance(**compliance),
     )
 
 

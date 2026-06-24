@@ -167,9 +167,7 @@ def build_rule_based_plan(question: str) -> AssistantPlan | None:
 
     if "steamer" in lowered or "drifter" in lowered:
         movement_types = (
-            ["steam", "firm", "late_firm"]
-            if "steamer" in lowered
-            else ["drift", "blowout"]
+            ["steam", "firm", "late_firm"] if "steamer" in lowered else ["drift", "blowout"]
         )
         comparator = "< 0" if "steamer" in lowered else "> 0"
         sql = (
@@ -209,9 +207,7 @@ def build_rule_based_plan(question: str) -> AssistantPlan | None:
             params.append(track)
             param_index += 1
         if condition:
-            conditions.append(
-                f"LOWER(COALESCE(tc.condition_category, '')) = LOWER(${param_index})"
-            )
+            conditions.append(f"LOWER(COALESCE(tc.condition_category, '')) = LOWER(${param_index})")
             params.append(condition)
             param_index += 1
         if distance is not None:
