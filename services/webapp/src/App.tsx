@@ -16,11 +16,34 @@ import {
   type AssistantResponse,
   type BarrierResponse,
   type HeatmapResponse,
+  type HorseScores,
   type OddsResponse,
   type PeopleResponse,
   type RaceDetail,
+  type SignalPerformanceItem,
   type StatsOverview,
 } from './lib/api'
+import {
+  DEMO_ANSWERS,
+  DEMO_ASK_EXAMPLES,
+  DEMO_BARRIERS,
+  DEMO_DRIFTERS,
+  DEMO_HEATMAP,
+  DEMO_INTELLIGENCE_LEADERBOARD,
+  DEMO_JOCKEYS,
+  DEMO_MEETINGS,
+  DEMO_ODDS,
+  DEMO_PATTERNS,
+  DEMO_RACE_DETAIL,
+  DEMO_RACE_LIST,
+  DEMO_SIGNAL_PERFORMANCE,
+  DEMO_SMART_MONEY,
+  DEMO_STATS_OVERVIEW,
+  DEMO_STEAMERS,
+  DEMO_TRACKS,
+  DEMO_TRAINERS,
+} from './lib/demoData'
+import { useMode } from './lib/ModeContext'
 import { cn, formatBytes, formatDateTime, formatNumber, formatPercent } from './lib/utils'
 
 const navigation = [
@@ -48,15 +71,56 @@ function getSignalType(item: { signal_type?: string; indicator_type?: string; pa
 }
 
 function App() {
+  const { mode, setMode } = useMode()
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-4 sm:px-6 lg:px-8">
         <header className="mb-6 rounded-2xl border border-cyan-900/40 bg-slate-950/90 p-4 shadow-[0_0_40px_rgba(34,211,238,0.12)]">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.35em] text-cyan-400">BETMAN_DATA</p>
-              <h1 className="text-3xl font-semibold text-white">Data Viewer</h1>
-              <p className="text-sm text-slate-400">Live command center for finding order in market chaos.</p>
+            <div className="flex items-center gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.35em] text-cyan-400">BETMAN_DATA</p>
+                <h1 className="text-3xl font-semibold text-white">Data Viewer</h1>
+                <p className="text-sm text-slate-400">Live command center for finding order in market chaos.</p>
+              </div>
+              <div className="flex flex-col items-start gap-1.5">
+                <div className="flex rounded-lg border border-slate-700 bg-slate-900 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setMode('demo')}
+                    className={cn(
+                      'rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-widest transition duration-200',
+                      mode === 'demo'
+                        ? 'bg-cyan-500 text-slate-950 shadow-[0_0_12px_rgba(34,211,238,0.5)]'
+                        : 'text-slate-400 hover:text-slate-200',
+                    )}
+                  >
+                    Demo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode('live')}
+                    className={cn(
+                      'rounded-md px-4 py-1.5 text-xs font-semibold uppercase tracking-widest transition duration-200',
+                      mode === 'live'
+                        ? 'bg-emerald-500 text-slate-950 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
+                        : 'text-slate-400 hover:text-slate-200',
+                    )}
+                  >
+                    Live
+                  </button>
+                </div>
+                {mode === 'demo' && (
+                  <span className="rounded-full bg-cyan-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-400 ring-1 ring-cyan-500/30">
+                    ● Pitch mode — sample data
+                  </span>
+                )}
+                {mode === 'live' && (
+                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-400 ring-1 ring-emerald-500/30">
+                    ● Live — polling API
+                  </span>
+                )}
+              </div>
             </div>
             <nav className="grid gap-2 sm:grid-cols-3 lg:flex">
               {navigation.map(({ to, label, icon: Icon }) => (
@@ -96,10 +160,12 @@ function App() {
 }
 
 function OverviewView() {
+  const { mode } = useMode()
   const { data, isLoading, error } = useQuery({
-    queryKey: ['stats-overview'],
-    queryFn: api.getStatsOverview,
-    refetchInterval: POLLING_INTERVALS.stats,
+    queryKey: ['stats-overview', mode],
+    queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_STATS_OVERVIEW) : api.getStatsOverview,
+    refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.stats,
+    staleTime: mode === 'demo' ? Infinity : 0,
   })
   const [livePulse, setLivePulse] = useState<number[]>([])
 
@@ -194,16 +260,19 @@ function OverviewView() {
 }
 
 function TodayView() {
+  const { mode } = useMode()
   const today = new Date().toISOString().slice(0, 10)
   const meetingsQuery = useQuery({
-    queryKey: ['meetings', today],
-    queryFn: () => api.getMeetings(today),
-    refetchInterval: POLLING_INTERVALS.meetings,
+    queryKey: ['meetings', today, mode],
+    queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_MEETINGS) : () => api.getMeetings(today),
+    refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.meetings,
+    staleTime: mode === 'demo' ? Infinity : 0,
   })
   const racesQuery = useQuery({
-    queryKey: ['races', today],
-    queryFn: () => api.getRaces({ date: today }),
-    refetchInterval: POLLING_INTERVALS.meetings,
+    queryKey: ['races', today, mode],
+    queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_RACE_LIST) : () => api.getRaces({ date: today }),
+    refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.meetings,
+    staleTime: mode === 'demo' ? Infinity : 0,
   })
   const [selectedRaceId, setSelectedRaceId] = useState<number | null>(null)
 
@@ -211,18 +280,20 @@ function TodayView() {
   const [raceDetail, odds] = useQueries({
     queries: [
       {
-        queryKey: ['race', raceId],
-        queryFn: () => api.getRace(raceId as number),
+        queryKey: ['race', raceId, mode],
+        queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_RACE_DETAIL) : () => api.getRace(raceId as number),
         enabled: raceId !== null,
+        staleTime: mode === 'demo' ? Infinity : 0,
       },
       {
-        queryKey: ['odds', raceId],
-        queryFn: () => {
+        queryKey: ['odds', raceId, mode],
+        queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_ODDS) : () => {
           if (raceId === null) throw new Error('Race id required')
           return api.getRaceOddsDrift(raceId)
         },
         enabled: raceId !== null,
-        refetchInterval: POLLING_INTERVALS.odds,
+        refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.odds,
+        staleTime: mode === 'demo' ? Infinity : 0,
       },
     ],
   })
@@ -299,11 +370,13 @@ function TodayView() {
 }
 
 function SignalsView() {
+  const { mode } = useMode()
   const today = new Date().toISOString().slice(0, 10)
   const races = useQuery({
-    queryKey: ['signal-races', today],
-    queryFn: () => api.getRaces({ date: today, limit: 80 }),
-    refetchInterval: POLLING_INTERVALS.signals,
+    queryKey: ['signal-races', today, mode],
+    queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_RACE_LIST) : () => api.getRaces({ date: today, limit: 80 }),
+    refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals,
+    staleTime: mode === 'demo' ? Infinity : 0,
   })
   const [selectedRaceId, setSelectedRaceId] = useState<number | null>(null)
 
@@ -315,21 +388,24 @@ function SignalsView() {
 
   const raceId = selectedRaceId ?? races.data?.races[0]?.id ?? null
 
-  const [odds, steamers, drifters, smartMoney, patterns] = useQueries({
+  const [odds, steamers, drifters, smartMoney, patterns, intelligence, signalPerf] = useQueries({
     queries: [
       {
-        queryKey: ['signal-odds-drift', raceId],
-        queryFn: () => {
+        queryKey: ['signal-odds-drift', raceId, mode],
+        queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_ODDS) : () => {
           if (raceId === null) throw new Error('Race id required')
           return api.getRaceOddsDrift(raceId)
         },
         enabled: raceId !== null,
-        refetchInterval: POLLING_INTERVALS.odds,
+        refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.odds,
+        staleTime: mode === 'demo' ? Infinity : 0,
       },
-      { queryKey: ['steamers'], queryFn: api.getSteamers, refetchInterval: POLLING_INTERVALS.signals },
-      { queryKey: ['drifters'], queryFn: api.getDrifters, refetchInterval: POLLING_INTERVALS.signals },
-      { queryKey: ['smart-money'], queryFn: api.getSmartMoney, refetchInterval: POLLING_INTERVALS.signals },
-      { queryKey: ['patterns'], queryFn: api.getDiscoveryPatterns, refetchInterval: POLLING_INTERVALS.signals },
+      { queryKey: ['steamers', mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_STEAMERS) : api.getSteamers, refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals, staleTime: mode === 'demo' ? Infinity : 0 },
+      { queryKey: ['drifters', mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_DRIFTERS) : api.getDrifters, refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals, staleTime: mode === 'demo' ? Infinity : 0 },
+      { queryKey: ['smart-money', mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_SMART_MONEY) : api.getSmartMoney, refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals, staleTime: mode === 'demo' ? Infinity : 0 },
+      { queryKey: ['patterns', mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_PATTERNS) : api.getDiscoveryPatterns, refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals, staleTime: mode === 'demo' ? Infinity : 0 },
+      { queryKey: ['intelligence-leaderboard', mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_INTELLIGENCE_LEADERBOARD) : () => api.getIntelligenceLeaderboard(today), refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals, staleTime: mode === 'demo' ? Infinity : 0 },
+      { queryKey: ['signal-performance', mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_SIGNAL_PERFORMANCE) : () => api.getSignalPerformance(), refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.barriers, staleTime: mode === 'demo' ? Infinity : 0 },
     ],
   })
 
@@ -349,9 +425,94 @@ function SignalsView() {
       .slice(0, 8)
   }, [odds.data])
 
+  const intellScores = intelligence.data ?? []
+  const topIntelScores = intellScores.slice(0, 8)
+
   return (
     <div className="space-y-4">
-      <SectionHeader title="Signals" subtitle="Live odds movement: steaming and drifting rendered in real time." />
+      <SectionHeader title="Signals" subtitle="BETMAN intelligence layer: proprietary scores, market edge, and odds movement." />
+
+      {/* ── BETMAN Intelligence showcase ── */}
+      <Card className="relative overflow-hidden border-cyan-900/40 bg-gradient-to-br from-slate-950 to-slate-900/90">
+        <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-cyan-500/8 blur-3xl" />
+        <div className="absolute -left-12 bottom-0 h-40 w-40 rounded-full bg-violet-500/8 blur-2xl" />
+        <div className="relative z-10">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-500/20 ring-1 ring-cyan-500/40">
+              <Sparkles className="h-4 w-4 text-cyan-400" />
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.35em] text-cyan-400">BETMAN Intelligence</p>
+              <h3 className="text-lg font-semibold text-white">Proprietary scoring engine — where we see edge the market doesn't</h3>
+            </div>
+          </div>
+          <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_1.4fr]">
+            {/* Alpha / Value leaderboard */}
+            <div>
+              <p className="mb-3 text-sm font-medium text-slate-300">Alpha leaderboard — top-scored runners today</p>
+              <div className="space-y-2">
+                {topIntelScores.slice(0, 6).map((horse, index) => {
+                  const edge = (horse.betman_probability ?? 0) - (horse.implied_probability ?? 0)
+                  const edgePositive = edge > 0
+                  return (
+                    <div key={horse.race_entry_id} className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
+                      <span className="w-5 text-xs font-bold text-cyan-500">#{index + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-sm font-semibold text-white">{horse.runner_name}</span>
+                          <span className="shrink-0 text-xs text-slate-400">α {horse.alpha_score?.toFixed(1)}</span>
+                        </div>
+                        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-violet-500"
+                            style={{ width: `${Math.min(100, (horse.alpha_score ?? 0))}%` }}
+                          />
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-[10px]">
+                          <span className="text-slate-500">Market {formatPercent(horse.implied_probability ?? 0)}</span>
+                          <span className={cn('font-semibold', edgePositive ? 'text-emerald-400' : 'text-rose-400')}>
+                            BETMAN {formatPercent(horse.betman_probability ?? 0)} {edgePositive ? '↑' : '↓'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className={cn('text-sm font-bold', edgePositive ? 'text-emerald-400' : 'text-rose-400')}>
+                          {edgePositive ? '+' : ''}{edge.toFixed(1)}%
+                        </div>
+                        <div className="text-[10px] text-slate-500">edge</div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+            {/* BETMAN edge chart */}
+            <div>
+              <p className="mb-3 text-sm font-medium text-slate-300">BETMAN probability vs market-implied probability</p>
+              <div className="h-[320px] rounded-xl border border-cyan-900/30 bg-slate-950/60 p-2">
+                <ReactECharts option={buildIntelligenceEdgeChart(topIntelScores)} style={{ height: '100%' }} />
+              </div>
+            </div>
+          </div>
+          {/* Signal performance ROI strip */}
+          {(signalPerf.data as SignalPerformanceItem[] | undefined)?.length ? (
+            <div className="mt-4 grid gap-3 border-t border-slate-800/60 pt-4 sm:grid-cols-4">
+              {(signalPerf.data as SignalPerformanceItem[]).map((sp) => (
+                <div key={sp.signal_type} className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">{sp.signal_type}</div>
+                  <div className={cn('mt-1 text-lg font-bold', (sp.roi ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+                    {(sp.roi ?? 0) >= 0 ? '+' : ''}{sp.roi?.toFixed(1)}% ROI
+                  </div>
+                  <div className="mt-0.5 text-xs text-slate-400">
+                    {sp.strike_rate?.toFixed(1)}% SR • {sp.bets} bets
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </Card>
+
       <div className="grid gap-4 lg:grid-cols-4">
         <MetricCard label="Steamers" value={formatNumber(steamers.data?.length)} tone="cyan" />
         <MetricCard label="Drifters" value={formatNumber(drifters.data?.length)} tone="rose" />
@@ -425,7 +586,12 @@ function SignalsView() {
 }
 
 function GatesView() {
-  const tracks = useQuery({ queryKey: ['tracks'], queryFn: api.getTracks })
+  const { mode } = useMode()
+  const tracks = useQuery({
+    queryKey: ['tracks', mode],
+    queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_TRACKS) : api.getTracks,
+    staleTime: mode === 'demo' ? Infinity : 0,
+  })
   const [trackName, setTrackName] = useState<string>('')
   const [surface, setSurface] = useState<string>('turf')
   const [conditionCategory, setConditionCategory] = useState<string>('all')
@@ -437,26 +603,30 @@ function GatesView() {
   const [barriers, heatmap] = useQueries({
     queries: [
       {
-        queryKey: ['barriers', selectedTrack, surface, conditionCategory, selectedDistance.key],
-        queryFn: () =>
-          api.getBarrierAnalysis(selectedTrack, {
-            surface,
-            condition_category: conditionCategory === 'all' ? undefined : conditionCategory,
-            distance_min: selectedDistance.min,
-            distance_max: selectedDistance.max,
-          }),
+        queryKey: ['barriers', selectedTrack, surface, conditionCategory, selectedDistance.key, mode],
+        queryFn: mode === 'demo'
+          ? () => Promise.resolve(DEMO_BARRIERS)
+          : () => api.getBarrierAnalysis(selectedTrack, {
+              surface,
+              condition_category: conditionCategory === 'all' ? undefined : conditionCategory,
+              distance_min: selectedDistance.min,
+              distance_max: selectedDistance.max,
+            }),
         enabled: selectedTrack.length > 0,
-        refetchInterval: POLLING_INTERVALS.barriers,
+        refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.barriers,
+        staleTime: mode === 'demo' ? Infinity : 0,
       },
       {
-        queryKey: ['heatmap', selectedTrack, surface, conditionCategory],
-        queryFn: () =>
-          api.getHeatmap(selectedTrack, {
-            surface,
-            condition_category: conditionCategory === 'all' ? undefined : conditionCategory,
-          }),
+        queryKey: ['heatmap', selectedTrack, surface, conditionCategory, mode],
+        queryFn: mode === 'demo'
+          ? () => Promise.resolve(DEMO_HEATMAP)
+          : () => api.getHeatmap(selectedTrack, {
+              surface,
+              condition_category: conditionCategory === 'all' ? undefined : conditionCategory,
+            }),
         enabled: selectedTrack.length > 0,
-        refetchInterval: POLLING_INTERVALS.barriers,
+        refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.barriers,
+        staleTime: mode === 'demo' ? Infinity : 0,
       },
     ],
   })
@@ -531,12 +701,27 @@ function GatesView() {
 }
 
 function PeopleView() {
-  const tracks = useQuery({ queryKey: ['people-tracks'], queryFn: api.getTracks })
+  const { mode } = useMode()
+  const tracks = useQuery({
+    queryKey: ['people-tracks', mode],
+    queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_TRACKS) : api.getTracks,
+    staleTime: mode === 'demo' ? Infinity : 0,
+  })
   const [trackName, setTrackName] = useState<string>('')
   const [trainerRates, jockeyRates] = useQueries({
     queries: [
-      { queryKey: ['trainer-rates', trackName], queryFn: () => api.getTrainerWinRates({ track: trackName || undefined, limit: 20 }), refetchInterval: POLLING_INTERVALS.people },
-      { queryKey: ['jockey-rates', trackName], queryFn: () => api.getJockeyWinRates({ track: trackName || undefined, limit: 20 }), refetchInterval: POLLING_INTERVALS.people },
+      {
+        queryKey: ['trainer-rates', trackName, mode],
+        queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_TRAINERS) : () => api.getTrainerWinRates({ track: trackName || undefined, limit: 20 }),
+        refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.people,
+        staleTime: mode === 'demo' ? Infinity : 0,
+      },
+      {
+        queryKey: ['jockey-rates', trackName, mode],
+        queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_JOCKEYS) : () => api.getJockeyWinRates({ track: trackName || undefined, limit: 20 }),
+        refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.people,
+        staleTime: mode === 'demo' ? Infinity : 0,
+      },
     ],
   })
 
@@ -572,14 +757,12 @@ function PeopleView() {
 }
 
 function AskBetmanView() {
-  const [question, setQuestion] = useState('best jockeys at Flemington on soft tracks in the last 180 days')
+  const { mode } = useMode()
+  const [question, setQuestion] = useState(DEMO_ASK_EXAMPLES[0])
   const [activeQuery, setActiveQuery] = useState('')
-  const examples = [
-    'best trainer win rates in the last 180 days',
-    'best jockeys at Flemington on soft tracks in the last 180 days',
-    'which barriers dominate heavy tracks this month',
-    "today's steamers",
-  ]
+  const [demoResult, setDemoResult] = useState<AssistantResponse | undefined>(undefined)
+  const [isThinking, setIsThinking] = useState(false)
+
   const mutation = useMutation({ mutationFn: api.askBetman })
 
   const [ocrResults, transcriptResults] = useQueries({
@@ -587,12 +770,12 @@ function AskBetmanView() {
       {
         queryKey: ['search-ocr', activeQuery],
         queryFn: () => api.searchOcr(activeQuery, 6),
-        enabled: activeQuery.length > 0,
+        enabled: activeQuery.length > 0 && mode === 'live',
       },
       {
         queryKey: ['search-transcripts', activeQuery],
         queryFn: () => api.searchTranscripts(activeQuery, 6),
-        enabled: activeQuery.length > 0,
+        enabled: activeQuery.length > 0 && mode === 'live',
       },
     ],
   })
@@ -600,49 +783,118 @@ function AskBetmanView() {
   const runQuery = () => {
     if (!question.trim()) return
     setActiveQuery(question)
-    mutation.mutate(question)
+    if (mode === 'demo') {
+      setIsThinking(true)
+      setDemoResult(undefined)
+      setTimeout(() => {
+        const q = question.trim().toLowerCase()
+        const match = Object.entries(DEMO_ANSWERS).find(([key]) => key.toLowerCase() === q)
+        const result = match ? match[1] : DEMO_ANSWERS[DEMO_ASK_EXAMPLES[0]]
+        setDemoResult({ ...result, question })
+        setIsThinking(false)
+      }, 1600)
+    } else {
+      mutation.mutate(question)
+    }
   }
+
+  const activeResult = mode === 'demo' ? demoResult : mutation.data
+  const isPending = mode === 'demo' ? isThinking : mutation.isPending
 
   return (
     <div className="space-y-4">
-      <SectionHeader title="Ask BETMAN" subtitle="Conversational intelligence layer with narrated analysis and supporting context." />
+      <SectionHeader title="Ask BETMAN" subtitle="BETMAN's AI/LLM core — natural-language questions answered with evidence, confidence, and live charts." />
       <Card className="space-y-4 border-cyan-900/40 bg-gradient-to-br from-slate-950 to-slate-900/90">
-        <PanelTitle title="Natural-language analysis" subtitle="Ask for an angle and BETMAN synthesises the answer instantly." />
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-500/20 ring-1 ring-cyan-500/40">
+            <Search className="h-4 w-4 text-cyan-400" />
+          </div>
+          <PanelTitle title="Natural-language analysis" subtitle="BETMAN synthesises SQL, executes against the warehouse, and narrates the answer." />
+        </div>
         <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
           <Input value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && runQuery()} />
-          <Button onClick={runQuery} disabled={mutation.isPending}>{mutation.isPending ? 'Analysing…' : 'Analyse'}</Button>
+          <Button onClick={runQuery} disabled={isPending}>{isPending ? 'Analysing…' : 'Ask BETMAN'}</Button>
         </div>
         <div className="flex flex-wrap gap-2">
-          {examples.map((example) => (
-            <button key={example} type="button" className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 transition hover:border-cyan-500 hover:text-cyan-300" onClick={() => setQuestion(example)}>
+          {DEMO_ASK_EXAMPLES.map((example) => (
+            <button
+              key={example}
+              type="button"
+              className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 transition hover:border-cyan-500 hover:text-cyan-300"
+              onClick={() => { setQuestion(example); }}
+            >
               {example}
             </button>
           ))}
         </div>
       </Card>
-      <ErrorBanner error={mutation.error} />
-      {mutation.isPending ? <ChartSkeleton /> : null}
-      <AssistantResult result={mutation.data} supportHits={(ocrResults.data?.results ?? []).concat(transcriptResults.data?.results ?? [])} />
+      <ErrorBanner error={mode === 'live' ? mutation.error : null} />
+      {isPending ? (
+        <Card className="border-cyan-900/40 bg-gradient-to-br from-slate-950 to-slate-900/90">
+          <div className="flex items-center gap-3 py-2">
+            <div className="flex gap-1">
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  className="h-2 w-2 animate-bounce rounded-full bg-cyan-400"
+                  style={{ animationDelay: `${i * 0.15}s` }}
+                />
+              ))}
+            </div>
+            <span className="text-sm text-cyan-300">BETMAN is reasoning across the warehouse…</span>
+          </div>
+          <div className="mt-3 space-y-2">
+            <div className="h-2 w-3/4 animate-pulse rounded bg-slate-800" />
+            <div className="h-2 w-1/2 animate-pulse rounded bg-slate-800" />
+            <div className="h-2 w-2/3 animate-pulse rounded bg-slate-800" />
+          </div>
+        </Card>
+      ) : null}
+      <AssistantResult result={activeResult} supportHits={(ocrResults.data?.results ?? []).concat(transcriptResults.data?.results ?? [])} />
     </div>
   )
 }
 
 function AssistantResult({ result, supportHits }: { result?: AssistantResponse; supportHits: Array<Record<string, unknown>> }) {
   if (!result) {
-    return <EmptyState title="No query yet" description="Run a prompt to generate an answer, narration, and visual breakdown." />
+    return (
+      <Card className="border-dashed border-slate-700 bg-slate-900/30">
+        <div className="py-6 text-center">
+          <Search className="mx-auto mb-3 h-8 w-8 text-slate-600" />
+          <div className="text-sm font-medium text-white">Ask BETMAN anything about the race data</div>
+          <p className="mt-1 text-sm text-slate-400">Try one of the example prompts above, or type your own question.</p>
+        </div>
+      </Card>
+    )
   }
 
   const columnNames = Object.keys(result.rows[0] ?? {})
   const chartOption = buildAssistantChart(result)
+  const confidencePct = Math.round(result.confidence * 100)
+  const confidenceColor = confidencePct >= 85 ? 'emerald' : confidencePct >= 70 ? 'cyan' : 'amber'
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
       <Card>
-        <PanelTitle title="Narrated answer" subtitle={`Confidence ${formatPercent(result.confidence * 100)}`} />
-        <div className="mt-4 rounded-lg border border-cyan-900/40 bg-cyan-500/5 p-3 text-sm text-slate-200">“{result.question}”</div>
-        <p className="mt-3 text-sm text-slate-300">{result.summary}</p>
+        <div className="flex items-start justify-between gap-4">
+          <PanelTitle title="BETMAN analysis" subtitle={`Provider: ${result.provider}`} />
+          <div className="shrink-0 text-right">
+            <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Confidence</div>
+            <div className={cn('text-2xl font-bold', confidenceColor === 'emerald' ? 'text-emerald-400' : confidenceColor === 'cyan' ? 'text-cyan-400' : 'text-amber-400')}>
+              {confidencePct}%
+            </div>
+            <div className="mt-1 h-1.5 w-16 overflow-hidden rounded-full bg-slate-800">
+              <div
+                className={cn('h-full rounded-full transition-all duration-700', confidenceColor === 'emerald' ? 'bg-emerald-400' : confidenceColor === 'cyan' ? 'bg-cyan-400' : 'bg-amber-400')}
+                style={{ width: `${confidencePct}%` }}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 rounded-lg border border-cyan-900/40 bg-cyan-500/5 p-3 text-sm text-slate-200 italic">"{result.question}"</div>
+        <p className="mt-3 text-sm leading-relaxed text-slate-300">{result.summary}</p>
         <details className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-          <summary className="cursor-pointer text-sm text-cyan-300">Generated SQL</summary>
+          <summary className="cursor-pointer text-sm text-cyan-300">Show reasoning (generated SQL)</summary>
           <pre className="mt-3 overflow-x-auto text-xs text-slate-300">{result.sql}</pre>
         </details>
       </Card>
@@ -1097,6 +1349,63 @@ function formatSupportHit(hit: Record<string, unknown>) {
     .slice(0, 3)
     .map(([key, value]) => `${key.replace(/_/g, ' ')}: ${String(value)}`)
   return fallbackEntries.length > 0 ? fallbackEntries.join(' • ') : DEFAULT_SUPPORT_HIT_TEXT
+}
+
+function buildIntelligenceEdgeChart(scores: HorseScores[]) {
+  const items = scores.slice(0, 8)
+  const names = items.map((s) => s.runner_name)
+  const betmanProb = items.map((s) => Number((s.betman_probability ?? 0).toFixed(1)))
+  const marketProb = items.map((s) => Number((s.implied_probability ?? 0).toFixed(1)))
+
+  return {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: Array<{ seriesName: string; value: number; name: string }>) =>
+        params.map((p) => `${p.seriesName}: ${p.value}%`).join('<br/>'),
+    },
+    legend: {
+      data: ['BETMAN %', 'Market %'],
+      top: 4,
+      textStyle: { color: '#cbd5e1', fontSize: 11 },
+    },
+    xAxis: {
+      type: 'category',
+      data: names,
+      axisLabel: { color: '#94a3b8', rotate: names.length > 5 ? 18 : 0, interval: 0, fontSize: 11 },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: '#94a3b8', formatter: (v: number) => `${v}%` },
+      splitLine: { lineStyle: { color: '#1e293b' } },
+    },
+    series: [
+      {
+        name: 'BETMAN %',
+        type: 'bar',
+        data: betmanProb.map((v, i) => ({
+          value: v,
+          itemStyle: {
+            color: v > marketProb[i]
+              ? { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: '#22d3ee' }, { offset: 1, color: '#0ea5e9' }] }
+              : { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: '#6366f1' }, { offset: 1, color: '#4338ca' }] },
+          },
+        })),
+        barGap: '10%',
+        label: { show: true, position: 'top', color: '#e2e8f0', fontSize: 10, formatter: (p: { value: number }) => `${p.value}%` },
+        borderRadius: [4, 4, 0, 0],
+      },
+      {
+        name: 'Market %',
+        type: 'bar',
+        data: marketProb,
+        itemStyle: { color: 'rgba(148,163,184,0.35)', borderRadius: [4, 4, 0, 0] },
+        label: { show: true, position: 'top', color: '#64748b', fontSize: 10, formatter: (p: { value: number }) => `${p.value}%` },
+      },
+    ],
+    grid: { top: 48, left: 44, right: 20, bottom: names.length > 5 ? 68 : 34 },
+    animationDuration: 800,
+  }
 }
 
 export default App
