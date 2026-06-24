@@ -424,19 +424,13 @@ async def _redis_daily_quota(
     today = datetime.now(UTC).strftime("%Y-%m-%d")
     key = f"betman:quota:{tenant_id}:{today}"
     count = await redis_client.incr(key)  # type: ignore[attr-defined]
+    tomorrow = (datetime.now(UTC) + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    retry_after = max(1, int((tomorrow - datetime.now(UTC)).total_seconds()))
     if count == 1:
         # Key is new — expire at midnight UTC tomorrow
-        tomorrow = (datetime.now(UTC) + timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        ttl = max(1, int((tomorrow - datetime.now(UTC)).total_seconds()))
-        await redis_client.expire(key, ttl)  # type: ignore[attr-defined]
-        retry_after = ttl
-    else:
-        tomorrow = (datetime.now(UTC) + timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        retry_after = max(1, int((tomorrow - datetime.now(UTC)).total_seconds()))
+        await redis_client.expire(key, retry_after)  # type: ignore[attr-defined]
     exceeded = int(count) > daily_quota
     return exceeded, retry_after
 

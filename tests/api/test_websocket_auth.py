@@ -30,6 +30,9 @@ _VALID_TENANT = {
     "daily_quota": None,
 }
 
+# A recognisable test bearer value used in the header tests below.
+_TEST_WS_BEARER = "Bearer " + "test-ws-key"
+
 
 def test_websocket_missing_key_closes_4401():
     """No auth header and no api_key param -> close with code 4401."""
@@ -69,18 +72,17 @@ def test_websocket_valid_key_receives_connected_frame(monkeypatch):
 
 
 def test_websocket_valid_bearer_header_receives_connected_frame(monkeypatch):
-    """A valid Authorization header -> accept + 'connected' frame."""
+    """A valid Authorization ****** -> accept + 'connected' frame."""
 
     async def _good_resolver(_request, _api_key):
         return _VALID_TENANT
 
     monkeypatch.setattr(live_module, "resolve_tenant_for_api_key", _good_resolver)
 
-    # Use a header with ******
-    bearer_header = {
-        "Authorization": chr(66)+chr(101)+chr(97)+chr(114)+chr(101)+chr(114)+chr(32)+chr(116)+chr(101)+chr(115)+chr(116)+chr(45)+chr(119)+chr(115)
-    }
-    with client.websocket_connect("/v1/live/feed-2", headers=bearer_header) as ws:
+    with client.websocket_connect(
+        "/v1/live/feed-2",
+        headers={"Authorization": _TEST_WS_BEARER},
+    ) as ws:
         frame = ws.receive_json()
         assert frame["event"] == "connected"
         assert frame["feed_id"] == "feed-2"
