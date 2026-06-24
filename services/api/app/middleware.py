@@ -2,7 +2,7 @@
 Middleware for the BETMAN Data API.
 
 TenantMiddleware:
-  Resolves the Authorization: ****** header to a Tenant
+  Resolves the Authorization: ****** to a Tenant
   record and attaches it to request.state. All downstream route
   handlers can read request.state.tenant for the current tenant.
   Admin routes additionally require the key to have admin scope.
@@ -21,7 +21,7 @@ import json
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from threading import Lock
 
 import structlog
@@ -34,12 +34,30 @@ from app.metrics import metrics
 
 log = structlog.get_logger(__name__)
 
-# Paths that do not require authentication
-_PUBLIC_PATHS = {"/v1/health", "/v1/ready", "/v1/metrics", "/docs", "/openapi.json", "/redoc"}
+# Paths that never require authentication
+_PUBLIC_PATHS: set[str] = {"/v1/health", "/v1/ready", "/docs", "/openapi.json", "/redoc"}
+if settings.metrics_public:
+    _PUBLIC_PATHS.add("/v1/metrics")
+
+# /v1/metrics requires admin scope when metrics_public=False
+_METRICS_PATH = "/v1/metrics"
 # Paths that additionally require admin scope
 _ADMIN_PREFIX = "/v1/admin"
+
+# In-process rate-limit store — fallback when Redis is unavailable
 _RATE_LIMIT_LOCK = Lock()
 _RATE_LIMIT_WINDOWS: dict[tuple[int, str], dict[str, int | float]] = {}
+
+# Atomic Lua script: fixed-window counter in Redis
+# Returns {count, ttl_seconds}
+_RATE_LIMIT_LUA = """
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+local ttl = redis.call('TTL', KEYS[1])
+return {count, ttl}
+"""
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -114,6 +132,17 @@ class TenantMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith(_ADMIN_PREFIX) and not tenant.get("is_admin"):
             return JSONResponse(
                 {"error": "forbidden", "message": "Admin access required"},
+                status_code=403,
+            )
+
+        # Gate /v1/metrics: require admin scope unless metrics_public=True
+        if (
+            request.url.path == _METRICS_PATH
+            and not settings.metrics_public
+            and not tenant.get("is_admin")
+        ):
+            return JSONResponse(
+                {"error": "forbidden", "message": "Admin access required for metrics"},
                 status_code=403,
             )
 
@@ -261,53 +290,149 @@ async def _rate_limit_response(request: Request, tenant: dict) -> tuple[JSONResp
     if tenant_id is None:
         return None, 0
 
-    now = time.time()
-    window = settings.rate_limit_window_seconds
     limit = int(tenant.get("requests_per_minute") or settings.rate_limit_requests)
-    key = (int(tenant_id), request.url.path)
+    window = settings.rate_limit_window_seconds
 
-    with _RATE_LIMIT_LOCK:
-        bucket = _RATE_LIMIT_WINDOWS.get(key)
-        if bucket is None or now >= float(bucket["reset_at"]):
-            bucket = {"count": 0, "reset_at": now + window}
-            _RATE_LIMIT_WINDOWS[key] = bucket
-        bucket["count"] = int(bucket["count"]) + 1
-        count = int(bucket["count"])
-        retry_after = max(1, int(float(bucket["reset_at"]) - now))
+    redis_client = getattr(request.app.state, "redis", None)
 
-    if count > limit:
-        return (
-            JSONResponse(
-                {"error": "rate_limited", "message": "Too many requests"},
-                status_code=429,
-            ),
-            retry_after,
-        )
-
-    daily_quota = tenant.get("daily_quota")
-    if daily_quota:
-        pool = getattr(request.app.state, "db_pool", None)
-        if pool is not None:
-            async with pool.acquire() as conn:
-                used_today = await conn.fetchval(
-                    """
-                    SELECT COUNT(*)
-                    FROM tenant_usage
-                    WHERE tenant_id = $1
-                      AND captured_at >= date_trunc('day', now())
-                    """,
-                    tenant_id,
-                )
-            if int(used_today or 0) >= int(daily_quota):
+    # --- Redis-backed fixed-window rate limit ---
+    if redis_client is not None:
+        try:
+            limited, retry_after = await _redis_rate_limit(
+                redis_client, int(tenant_id), request.url.path, limit, window
+            )
+            if limited:
                 return (
                     JSONResponse(
-                        {"error": "rate_limited", "message": "Daily quota exceeded"},
+                        {"error": "rate_limited", "message": "Too many requests"},
                         status_code=429,
                     ),
-                    window,
+                    retry_after,
                 )
+        except Exception:
+            log.warning(
+                "rate_limit.redis_unavailable",
+                tenant_id=tenant_id,
+                path=request.url.path,
+                msg="falling back to in-process limiter",
+            )
+            # fall through to in-process limiter
+            redis_client = None
+
+    # --- In-process fallback ---
+    if redis_client is None:
+        now = time.time()
+        key = (int(tenant_id), request.url.path)
+        with _RATE_LIMIT_LOCK:
+            bucket = _RATE_LIMIT_WINDOWS.get(key)
+            if bucket is None or now >= float(bucket["reset_at"]):
+                bucket = {"count": 0, "reset_at": now + window}
+                _RATE_LIMIT_WINDOWS[key] = bucket
+            bucket["count"] = int(bucket["count"]) + 1
+            count = int(bucket["count"])
+            retry_after = max(1, int(float(bucket["reset_at"]) - now))
+
+        if count > limit:
+            return (
+                JSONResponse(
+                    {"error": "rate_limited", "message": "Too many requests"},
+                    status_code=429,
+                ),
+                retry_after,
+            )
+
+    # --- Daily quota (Redis-backed, fallback to DB count) ---
+    daily_quota = tenant.get("daily_quota")
+    if daily_quota:
+        quota_client = getattr(request.app.state, "redis", None)
+        if quota_client is not None:
+            try:
+                exceeded, quota_retry = await _redis_daily_quota(
+                    quota_client, int(tenant_id), int(daily_quota)
+                )
+                if exceeded:
+                    return (
+                        JSONResponse(
+                            {"error": "rate_limited", "message": "Daily quota exceeded"},
+                            status_code=429,
+                        ),
+                        quota_retry,
+                    )
+            except Exception:
+                log.warning(
+                    "daily_quota.redis_unavailable",
+                    tenant_id=tenant_id,
+                    msg="falling back to DB quota check",
+                )
+                quota_client = None
+
+        if quota_client is None:
+            # Fallback: query tenant_usage directly
+            pool = getattr(request.app.state, "db_pool", None)
+            if pool is not None:
+                try:
+                    async with pool.acquire() as conn:
+                        used_today = await conn.fetchval(
+                            """
+                            SELECT COUNT(*)
+                            FROM tenant_usage
+                            WHERE tenant_id = $1
+                              AND captured_at >= date_trunc('day', now())
+                            """,
+                            tenant_id,
+                        )
+                    if int(used_today or 0) >= int(daily_quota):
+                        return (
+                            JSONResponse(
+                                {"error": "rate_limited", "message": "Daily quota exceeded"},
+                                status_code=429,
+                            ),
+                            window,
+                        )
+                except Exception:
+                    log.warning(
+                        "daily_quota.db_unavailable",
+                        tenant_id=tenant_id,
+                        msg="skipping quota check",
+                    )
 
     return None, 0
+
+
+async def _redis_rate_limit(
+    redis_client: object,
+    tenant_id: int,
+    path: str,
+    limit: int,
+    window: int,
+) -> tuple[bool, int]:
+    """Atomic fixed-window counter in Redis. Returns (is_limited, retry_after)."""
+    window_bucket = int(time.time()) // window
+    key = f"betman:ratelimit:{tenant_id}:{path}:{window_bucket}"
+    result = await redis_client.eval(_RATE_LIMIT_LUA, 1, key, window)  # type: ignore[attr-defined]
+    count, ttl = int(result[0]), int(result[1])
+    retry_after = max(1, ttl)
+    return count > limit, retry_after
+
+
+async def _redis_daily_quota(
+    redis_client: object,
+    tenant_id: int,
+    daily_quota: int,
+) -> tuple[bool, int]:
+    """Increment today's per-tenant request counter in Redis. Returns (exceeded, retry_after)."""
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    key = f"betman:quota:{tenant_id}:{today}"
+    count = await redis_client.incr(key)  # type: ignore[attr-defined]
+    tomorrow = (datetime.now(UTC) + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    retry_after = max(1, int((tomorrow - datetime.now(UTC)).total_seconds()))
+    if count == 1:
+        # Key is new — expire at midnight UTC tomorrow
+        await redis_client.expire(key, retry_after)  # type: ignore[attr-defined]
+    exceeded = int(count) > daily_quota
+    return exceeded, retry_after
 
 
 async def _write_usage_record(
@@ -335,7 +460,7 @@ async def _write_usage_record(
                 int(duration_ms),
             )
     except Exception:
-        log.exception("tenant_usage.write_failed", tenant_id=tenant_id, path=request.url.path)
+        log.warning("tenant_usage.write_failed", tenant_id=tenant_id, path=request.url.path)
 
 
 async def write_audit_log(
@@ -365,7 +490,7 @@ async def write_audit_log(
                 request.client.host if request.client else None,
             )
     except Exception:
-        log.exception("audit_log.write_failed", action=action, resource=resource)
+        log.warning("audit_log.write_failed", action=action, resource=resource)
 
 
 def metrics_snapshot() -> str:

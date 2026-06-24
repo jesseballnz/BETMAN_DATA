@@ -46,18 +46,7 @@ discovery-dev: ## Run Discovery service locally
 
 # ── Database ──────────────────────────────────────────────────────────────────
 migrate: ## Apply all migrations (001 + 002 + 003 + 004) to the target DB
-	@ADMIN_HASH="$$(python - <<'PY'\nimport hashlib, os\nkey = os.getenv('ADMIN_API_KEY', '').encode()\nsalt = os.getenv('PLATFORM_MASTER_KEY', '').encode()\nprint(hashlib.pbkdf2_hmac('sha256', key, salt, 600_000).hex() if key else '')\nPY\n)"; \
-	ADMIN_PREFIX="$${ADMIN_API_KEY:0:8}"; \
-	WEBAPP_HASH="$$(python - <<'PY'\nimport hashlib, os\nkey = os.getenv('WEBAPP_READONLY_API_KEY', '').encode()\nsalt = os.getenv('PLATFORM_MASTER_KEY', '').encode()\nprint(hashlib.pbkdf2_hmac('sha256', key, salt, 600_000).hex() if key else '')\nPY\n)"; \
-	WEBAPP_PREFIX="$${WEBAPP_READONLY_API_KEY:0:8}"; \
-	PGOPTIONS="-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX" \
-	psql "$(DB_URL)" -f $(MIGRATION_DIR)/001_initial_schema.sql; \
-	PGOPTIONS="-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX" \
-	psql "$(DB_URL)" -f $(MIGRATION_DIR)/002_intelligence_layers.sql; \
-	PGOPTIONS="-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX" \
-	psql "$(DB_URL)" -f $(MIGRATION_DIR)/003_pedigree_and_providers.sql; \
-	PGOPTIONS="-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX" \
-	psql "$(DB_URL)" -f $(MIGRATION_DIR)/004_api_keys_and_security.sql
+	@DATABASE_URL="$(DB_URL)" sh scripts/migrate.sh
 
 migrate-001: ## Apply only the initial schema migration
 	psql "$(DB_URL)" -f $(MIGRATION_DIR)/001_initial_schema.sql
@@ -65,13 +54,8 @@ migrate-001: ## Apply only the initial schema migration
 migrate-002: ## Apply only the intelligence layers migration
 	psql "$(DB_URL)" -f $(MIGRATION_DIR)/002_intelligence_layers.sql
 
-migrate-004: ## Apply the API key and security migration
-	@ADMIN_HASH="$$(python - <<'PY'\nimport hashlib, os\nkey = os.getenv('ADMIN_API_KEY', '').encode()\nsalt = os.getenv('PLATFORM_MASTER_KEY', '').encode()\nprint(hashlib.pbkdf2_hmac('sha256', key, salt, 600_000).hex() if key else '')\nPY\n)"; \
-	ADMIN_PREFIX="$${ADMIN_API_KEY:0:8}"; \
-	WEBAPP_HASH="$$(python - <<'PY'\nimport hashlib, os\nkey = os.getenv('WEBAPP_READONLY_API_KEY', '').encode()\nsalt = os.getenv('PLATFORM_MASTER_KEY', '').encode()\nprint(hashlib.pbkdf2_hmac('sha256', key, salt, 600_000).hex() if key else '')\nPY\n)"; \
-	WEBAPP_PREFIX="$${WEBAPP_READONLY_API_KEY:0:8}"; \
-	PGOPTIONS="-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX" \
-	psql "$(DB_URL)" -f $(MIGRATION_DIR)/004_api_keys_and_security.sql
+migrate-004: ## Apply all migrations with API key seeding (idempotent)
+	@DATABASE_URL="$(DB_URL)" sh scripts/migrate.sh
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 docker-infra: ## Start only infrastructure services (postgres, redis, minio)
