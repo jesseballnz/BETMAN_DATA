@@ -50,7 +50,10 @@ async def get_discovered_patterns(
     request: Request,
     pattern_type: str | None = Query(
         default=None,
-        description="gate_bias, trainer_trend, sire_trend, market_anomaly, weather_correlation, heatmap_correlation, combination",
+        description=(
+            "gate_bias, trainer_trend, sire_trend, market_anomaly, "
+            "weather_correlation, heatmap_correlation, combination"
+        ),
     ),
     min_roi: float | None = Query(default=None, description="Minimum estimated ROI"),
     min_confidence: float = Query(default=0.7),
@@ -75,7 +78,7 @@ async def get_discovered_patterns(
                sample_size, first_detected::text AS first_detected,
                valid_until::text AS valid_until, active
         FROM discovered_patterns
-        WHERE {' AND '.join(clauses)}
+        WHERE {" AND ".join(clauses)}
         ORDER BY roi DESC NULLS LAST, confidence DESC, first_detected DESC
         LIMIT ${len(params)}
         """,
@@ -114,7 +117,7 @@ async def get_pattern_signals(
         JOIN meetings m ON m.id = r.meeting_id
         LEFT JOIN race_entries re ON re.id = ps.race_entry_id
         LEFT JOIN runners run ON run.id = re.runner_id
-        WHERE {' AND '.join(clauses)}
+        WHERE {" AND ".join(clauses)}
         ORDER BY ps.generated_at DESC, ps.signal_strength DESC
         LIMIT ${len(params)}
         """,
@@ -150,10 +153,22 @@ async def get_gate_bias_patterns(
     clauses = ["pattern_type = 'gate_bias'", "active = true"]
     if track_name is not None:
         params.append(track_name)
-        clauses.append(f"LOWER(COALESCE(parameters_json->>'track', parameters_json->>'track_name', '')) = LOWER(${len(params)})")
+        clauses.append(
+            "LOWER(COALESCE("
+            "parameters_json->>'track', "
+            "parameters_json->>'track_name', "
+            "''"
+            f")) = LOWER(${len(params)})"
+        )
     if condition_category is not None:
         params.append(condition_category)
-        clauses.append(f"LOWER(COALESCE(parameters_json->>'condition', parameters_json->>'condition_category', '')) = LOWER(${len(params)})")
+        clauses.append(
+            "LOWER(COALESCE("
+            "parameters_json->>'condition', "
+            "parameters_json->>'condition_category', "
+            "''"
+            f")) = LOWER(${len(params)})"
+        )
     params.append(limit)
     rows = await fetch_all(
         request,
@@ -162,7 +177,7 @@ async def get_gate_bias_patterns(
                sample_size, first_detected::text AS first_detected,
                valid_until::text AS valid_until, active
         FROM discovered_patterns
-        WHERE {' AND '.join(clauses)}
+        WHERE {" AND ".join(clauses)}
         ORDER BY roi DESC NULLS LAST, confidence DESC
         LIMIT ${len(params)}
         """,

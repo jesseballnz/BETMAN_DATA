@@ -21,15 +21,15 @@ services:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
-      POSTGRES_DB: betman
-      POSTGRES_USER: betman
-      POSTGRES_PASSWORD: betman
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U betman -d betman"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -50,11 +50,11 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: betman
-      MINIO_ROOT_PASSWORD: betman_secret
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in .env}
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Web console
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -63,7 +63,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Creates the betman-media bucket on first run
   minio-init:
     image: minio/mc:latest
     depends_on:
@@ -71,7 +70,7 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-        mc alias set local http://minio:9000 betman betman_secret &&
+        mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
         mc mb --ignore-existing local/betman-media &&
         mc anonymous set download local/betman-media &&
         echo 'MinIO bucket ready.'
@@ -88,12 +87,21 @@ services:
     volumes:
       - ./infra/migrations:/migrations
     environment:
-      PGPASSWORD: betman
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?set in .env}
+      WEBAPP_READONLY_API_KEY: ${WEBAPP_READONLY_API_KEY:?set in .env}
+      PLATFORM_MASTER_KEY: ${PLATFORM_MASTER_KEY:?set in .env}
     entrypoint: >
       /bin/sh -c "
-        psql -h postgres -U betman -d betman -f /migrations/001_initial_schema.sql &&
-        psql -h postgres -U betman -d betman -f /migrations/002_intelligence_layers.sql &&
-        psql -h postgres -U betman -d betman -f /migrations/003_pedigree_and_providers.sql &&
+        export ADMIN_HASH=$$(python -c 'import hashlib, os; key = os.environ.get(\"ADMIN_API_KEY\", \"\").encode(); salt = os.environ.get(\"PLATFORM_MASTER_KEY\", \"\").encode(); print(hashlib.pbkdf2_hmac(\"sha256\", key, salt, 600000).hex() if key else \"\")') &&
+        export ADMIN_PREFIX=$$(python -c 'import os; print(os.environ.get(\"ADMIN_API_KEY\", \"\")[:8])') &&
+        export WEBAPP_HASH=$$(python -c 'import hashlib, os; key = os.environ.get(\"WEBAPP_READONLY_API_KEY\", \"\").encode(); salt = os.environ.get(\"PLATFORM_MASTER_KEY\", \"\").encode(); print(hashlib.pbkdf2_hmac(\"sha256\", key, salt, 600000).hex() if key else \"\")') &&
+        export WEBAPP_PREFIX=$$(python -c 'import os; print(os.environ.get(\"WEBAPP_READONLY_API_KEY\", \"\")[:8])') &&
+        export PGOPTIONS=\"-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX\" &&
+        psql -h postgres -U ${POSTGRES_USER:?set in .env} -d ${POSTGRES_DB:?set in .env} -f /migrations/001_initial_schema.sql &&
+        psql -h postgres -U ${POSTGRES_USER:?set in .env} -d ${POSTGRES_DB:?set in .env} -f /migrations/002_intelligence_layers.sql &&
+        psql -h postgres -U ${POSTGRES_USER:?set in .env} -d ${POSTGRES_DB:?set in .env} -f /migrations/003_pedigree_and_providers.sql &&
+        psql -h postgres -U ${POSTGRES_USER:?set in .env} -d ${POSTGRES_DB:?set in .env} -f /migrations/004_api_keys_and_security.sql &&
         echo 'Migrations applied.'
       "
     restart: "no"
@@ -106,14 +114,15 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: "******postgres:5432/betman"
-      REDIS_URL: "redis://redis:6379/0"
-      MEDIA_BASE_URL: "http://minio:9000/betman-media"
-      CDN_BASE_URL: "http://localhost:9000/betman-media"
-      ADMIN_API_KEY: "dev-admin-key-change-in-production"
-      PLATFORM_MASTER_KEY: "dev-master-key-32-bytes-minimum!!"
-      ENVIRONMENT: "development"
-      LOG_LEVEL: "debug"
+      DATABASE_URL: ${DATABASE_URL:?set in .env}
+      REDIS_URL: ${REDIS_URL:?set in .env}
+      MEDIA_BASE_URL: ${MEDIA_BASE_URL:?set in .env}
+      CDN_BASE_URL: ${CDN_BASE_URL:?set in .env}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?set in .env}
+      PLATFORM_MASTER_KEY: ${PLATFORM_MASTER_KEY:?set in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:?set in .env}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,7 +131,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/ready"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -133,15 +142,14 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: "******postgres:5432/betman"
-      REDIS_URL: "redis://redis:6379/0"
-      QUEUE_URL: "redis://redis:6379/1"
-      STORAGE_BASE_PATH: "s3://betman-media"
-      PLATFORM_MASTER_KEY: "dev-master-key-32-bytes-minimum!!"
-      ENVIRONMENT: "development"
-      LOG_LEVEL: "debug"
-      # Override WeatherLink URL for local dev (point to a mock if needed)
-      WEATHERLINK_BASE_URL: "https://api.weatherlink.com/v2"
+      DATABASE_URL: ${DATABASE_URL:?set in .env}
+      REDIS_URL: ${REDIS_URL:?set in .env}
+      QUEUE_URL: ${QUEUE_URL:?set in .env}
+      STORAGE_BASE_PATH: ${STORAGE_BASE_PATH:?set in .env}
+      PLATFORM_MASTER_KEY: ${PLATFORM_MASTER_KEY:?set in .env}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      WEATHERLINK_BASE_URL: ${WEATHERLINK_BASE_URL:-https://api.weatherlink.com/v2}
     depends_on:
       postgres:
         condition: service_healthy
@@ -162,7 +170,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      API_PROXY_AUTHORIZATION: "Bearer dev-admin-key-change-in-production"
+      API_PROXY_AUTHORIZATION: ${API_PROXY_AUTHORIZATION:?set in .env}
     depends_on:
       api:
         condition: service_healthy

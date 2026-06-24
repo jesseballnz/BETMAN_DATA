@@ -63,9 +63,7 @@ def compute_person_metrics(
         item["win_rate"] = round(item["wins"] * 100.0 / runners, 2) if runners else 0.0
         item["place_rate"] = round(item["places"] * 100.0 / runners, 2) if runners else 0.0
         item["roi"] = (
-            round(item["roi_profit"] * 100.0 / priced_runners, 2)
-            if priced_runners
-            else None
+            round(item["roi_profit"] * 100.0 / priced_runners, 2) if priced_runners else None
         )
         del item["roi_profit"]
         del item["priced_runners"]

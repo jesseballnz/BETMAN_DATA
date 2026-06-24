@@ -41,11 +41,13 @@ Run migrations against the test database before running integration tests:
 ```bash
 psql $TEST_DATABASE_URL -f infra/migrations/001_initial_schema.sql
 psql $TEST_DATABASE_URL -f infra/migrations/002_intelligence_layers.sql
+psql $TEST_DATABASE_URL -f infra/migrations/003_pedigree_and_providers.sql
+psql $TEST_DATABASE_URL -f infra/migrations/004_api_keys_and_security.sql
 ```
 
 ## Writing Tests
 
 - Unit tests use `pytest` with `pytest-asyncio` for async test cases.
-- API tests use FastAPI's `TestClient` with a test database session.
+- API tests use FastAPI's `TestClient`; starter coverage is DB-optional and safe to run offline.
 - Use fixtures in `tests/fixtures/` for common test data setup.
 - All tests must be idempotent and clean up after themselves.

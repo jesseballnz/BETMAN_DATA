@@ -56,7 +56,9 @@ async def get_market_signals(
     request: Request,
     signal_type: str | None = Query(
         default=None,
-        description="steamer, drifter, late_money, price_compression, smart_money, field_compression",
+        description=(
+            "steamer, drifter, late_money, price_compression, smart_money, field_compression"
+        ),
     ),
     race_id: int | None = None,
     min_magnitude: float = Query(default=0.5),
@@ -75,11 +77,12 @@ async def get_market_signals(
         request,
         f"""
         SELECT ms.id, ms.race_id, ms.race_entry_id, run.name AS runner_name, ms.signal_type,
-               ms.magnitude, ms.detected_at::text AS detected_at, ms.time_to_jump_s, ms.evidence_json AS evidence
+               ms.magnitude, ms.detected_at::text AS detected_at,
+               ms.time_to_jump_s, ms.evidence_json AS evidence
         FROM market_signals ms
         LEFT JOIN race_entries re ON re.id = ms.race_entry_id
         LEFT JOIN runners run ON run.id = re.runner_id
-        WHERE {' AND '.join(clauses)}
+        WHERE {" AND ".join(clauses)}
         ORDER BY ms.detected_at DESC
         LIMIT ${len(params)}
         """,
@@ -94,14 +97,17 @@ async def get_steamers(
     race_date: str | None = Query(default=None, description="YYYY-MM-DD, defaults to today"),
     limit: int = Query(default=20, le=100),
 ):
-    params: list[object] = [race_date]
     rows = await fetch_all(
         request,
         """
         SELECT om.id, om.race_id, om.race_entry_id, run.name AS runner_name,
                om.movement_type AS signal_type, ABS(om.movement_pct)::float AS magnitude,
                om.detected_at::text AS detected_at, om.time_to_jump_s,
-               jsonb_build_object('from_price', om.from_price, 'to_price', om.to_price, 'source', om.source) AS evidence
+               jsonb_build_object(
+                   'from_price', om.from_price,
+                   'to_price', om.to_price,
+                   'source', om.source
+               ) AS evidence
         FROM odds_movements om
         JOIN races r ON r.id = om.race_id
         JOIN meetings m ON m.id = r.meeting_id
@@ -131,7 +137,11 @@ async def get_drifters(
         SELECT om.id, om.race_id, om.race_entry_id, run.name AS runner_name,
                om.movement_type AS signal_type, ABS(om.movement_pct)::float AS magnitude,
                om.detected_at::text AS detected_at, om.time_to_jump_s,
-               jsonb_build_object('from_price', om.from_price, 'to_price', om.to_price, 'source', om.source) AS evidence
+               jsonb_build_object(
+                   'from_price', om.from_price,
+                   'to_price', om.to_price,
+                   'source', om.source
+               ) AS evidence
         FROM odds_movements om
         JOIN races r ON r.id = om.race_id
         JOIN meetings m ON m.id = r.meeting_id
@@ -202,7 +212,7 @@ async def get_race_odds_ticks(
         FROM fixed_odds_ticks fot
         JOIN race_entries re ON re.id = fot.race_entry_id
         JOIN runners run ON run.id = re.runner_id
-        WHERE {' AND '.join(clauses)}
+        WHERE {" AND ".join(clauses)}
         ORDER BY fot.captured_at ASC
         """,
         *params,

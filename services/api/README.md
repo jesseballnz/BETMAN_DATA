@@ -55,8 +55,8 @@ make migrate
 ### Start the API with hot reload
 
 ```bash
-cp services/api/.env.example services/api/.env
-# Edit .env to match your local setup
+cp .env.example .env
+# Edit the root .env to match your local setup
 
 make api-dev
 ```
@@ -73,13 +73,14 @@ make docker-up
 
 ## Authentication
 
-All endpoints (except `/v1/health`) require an API key in the `X-API-Key` header:
+All protected endpoints require an API key in the `Authorization` header:
 
 ```
-X-API-Key: your_tenant_api_key_here
+Authorization: ******
 ```
 
-Admin endpoints additionally require the admin API key configured in `ADMIN_API_KEY`.
+Admin endpoints additionally require an admin-scoped key configured in `ADMIN_API_KEY`
+or seeded into `tenant_api_keys`.
 
 For local development, set a test key in `.env` and use it in requests.
 

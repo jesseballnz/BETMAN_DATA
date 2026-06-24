@@ -18,6 +18,15 @@ export interface StatsOverview {
   tables: Array<{ table_name: string; approx_rows: number; total_bytes: number; table_bytes: number; index_bytes: number }>
 }
 
+export interface HealthResponse {
+  status: string
+  version: string
+  environment: string
+  timestamp: string
+  db: string
+  redis: string
+}
+
 export interface MeetingsResponse {
   date: string | null
   meetings: Array<{ id: number; track_name: string; meeting_date: string; surface: string | null; jurisdiction: string | null; status: string; race_count: number; running_races: number; finished_races: number; races: Array<{ id: number; race_number: number; name: string | null; distance_m: number | null; status: string }> }>
@@ -92,6 +101,7 @@ export interface AssistantResponse {
   summary: string
   confidence: number
   chart: { type: string; x?: string; y?: string }
+  disclaimer?: string
 }
 
 export interface SearchResponse {
@@ -201,7 +211,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
+export function buildLiveWebSocketUrl(feedId: string | number) {
+  const baseUrl = new URL(API_BASE_URL, window.location.origin)
+  baseUrl.protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  baseUrl.pathname = `${baseUrl.pathname.replace(/\/$/, '')}/live/${feedId}`
+  if (API_BEARER_TOKEN) {
+    baseUrl.searchParams.set('api_key', API_BEARER_TOKEN)
+  }
+  return baseUrl.toString()
+}
+
 export const api = {
+  getHealth: () => request<HealthResponse>('/health'),
   getStatsOverview: () => request<StatsOverview>('/stats/overview'),
   getMeetings: (date?: string) => request<MeetingsResponse>(`/meetings${date ? `?date=${date}` : ''}`),
   getRaces: (options: RaceQueryOptions = {}) =>

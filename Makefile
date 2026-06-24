@@ -1,4 +1,5 @@
 .DEFAULT_GOAL := help
+SHELL := /bin/bash
 
 # ── Variables ─────────────────────────────────────────────────────────────────
 COMPOSE         := docker compose
@@ -9,9 +10,9 @@ DISCOVERY_DIR   := services/discovery
 MIGRATION_DIR   := infra/migrations
 DB_URL          ?= ******localhost:5432/betman_data
 
-.PHONY: help install api-dev consumer-dev scoring-dev discovery-dev \
-        migrate migrate-002 docker-up docker-down docker-infra docker-logs docker-build \
-        test lint format status clean
+.PHONY: help install setup api-dev consumer-dev scoring-dev discovery-dev \
+        migrate migrate-001 migrate-002 migrate-004 docker-up docker-down docker-infra docker-logs docker-build \
+        test test-api test-consumer lint format security-check status clean
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 help: ## Show this help message
@@ -24,6 +25,12 @@ install: ## Install all Python dependencies for every service
 	pip install -e "$(CONSUMER_DIR)[dev]"
 	pip install -e "$(SCORING_DIR)[dev]"
 	pip install -e "$(DISCOVERY_DIR)[dev]"
+
+setup: ## Copy env template, install deps, start infra, and apply migrations
+	@test -f .env || cp .env.example .env
+	$(MAKE) install
+	$(MAKE) docker-infra
+	$(MAKE) migrate
 
 api-dev: ## Run API service locally with hot reload
 	cd $(API_DIR) && uvicorn app.main:app --reload --port 8000
@@ -38,16 +45,33 @@ discovery-dev: ## Run Discovery service locally
 	cd $(DISCOVERY_DIR) && python -m app.main
 
 # ── Database ──────────────────────────────────────────────────────────────────
-migrate: ## Apply all migrations (001 + 002 + 003) to the target DB
-	psql "$(DB_URL)" -f $(MIGRATION_DIR)/001_initial_schema.sql
-	psql "$(DB_URL)" -f $(MIGRATION_DIR)/002_intelligence_layers.sql
-	psql "$(DB_URL)" -f $(MIGRATION_DIR)/003_pedigree_and_providers.sql
+migrate: ## Apply all migrations (001 + 002 + 003 + 004) to the target DB
+	@ADMIN_HASH="$$(python - <<'PY'\nimport hashlib, os\nkey = os.getenv('ADMIN_API_KEY', '').encode()\nsalt = os.getenv('PLATFORM_MASTER_KEY', '').encode()\nprint(hashlib.pbkdf2_hmac('sha256', key, salt, 600_000).hex() if key else '')\nPY\n)"; \
+	ADMIN_PREFIX="$${ADMIN_API_KEY:0:8}"; \
+	WEBAPP_HASH="$$(python - <<'PY'\nimport hashlib, os\nkey = os.getenv('WEBAPP_READONLY_API_KEY', '').encode()\nsalt = os.getenv('PLATFORM_MASTER_KEY', '').encode()\nprint(hashlib.pbkdf2_hmac('sha256', key, salt, 600_000).hex() if key else '')\nPY\n)"; \
+	WEBAPP_PREFIX="$${WEBAPP_READONLY_API_KEY:0:8}"; \
+	PGOPTIONS="-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX" \
+	psql "$(DB_URL)" -f $(MIGRATION_DIR)/001_initial_schema.sql; \
+	PGOPTIONS="-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX" \
+	psql "$(DB_URL)" -f $(MIGRATION_DIR)/002_intelligence_layers.sql; \
+	PGOPTIONS="-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX" \
+	psql "$(DB_URL)" -f $(MIGRATION_DIR)/003_pedigree_and_providers.sql; \
+	PGOPTIONS="-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX" \
+	psql "$(DB_URL)" -f $(MIGRATION_DIR)/004_api_keys_and_security.sql
 
 migrate-001: ## Apply only the initial schema migration
 	psql "$(DB_URL)" -f $(MIGRATION_DIR)/001_initial_schema.sql
 
 migrate-002: ## Apply only the intelligence layers migration
 	psql "$(DB_URL)" -f $(MIGRATION_DIR)/002_intelligence_layers.sql
+
+migrate-004: ## Apply the API key and security migration
+	@ADMIN_HASH="$$(python - <<'PY'\nimport hashlib, os\nkey = os.getenv('ADMIN_API_KEY', '').encode()\nsalt = os.getenv('PLATFORM_MASTER_KEY', '').encode()\nprint(hashlib.pbkdf2_hmac('sha256', key, salt, 600_000).hex() if key else '')\nPY\n)"; \
+	ADMIN_PREFIX="$${ADMIN_API_KEY:0:8}"; \
+	WEBAPP_HASH="$$(python - <<'PY'\nimport hashlib, os\nkey = os.getenv('WEBAPP_READONLY_API_KEY', '').encode()\nsalt = os.getenv('PLATFORM_MASTER_KEY', '').encode()\nprint(hashlib.pbkdf2_hmac('sha256', key, salt, 600_000).hex() if key else '')\nPY\n)"; \
+	WEBAPP_PREFIX="$${WEBAPP_READONLY_API_KEY:0:8}"; \
+	PGOPTIONS="-c app.admin_api_key_hash=$$ADMIN_HASH -c app.admin_api_key_prefix=$$ADMIN_PREFIX -c app.webapp_readonly_api_key_hash=$$WEBAPP_HASH -c app.webapp_readonly_api_key_prefix=$$WEBAPP_PREFIX" \
+	psql "$(DB_URL)" -f $(MIGRATION_DIR)/004_api_keys_and_security.sql
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 docker-infra: ## Start only infrastructure services (postgres, redis, minio)
@@ -73,20 +97,24 @@ docker-logs-consumer: ## Follow Consumer service logs
 
 # ── Testing ───────────────────────────────────────────────────────────────────
 test: ## Run all tests
-	pytest tests/ -v
+	python -m pytest tests/ -v
 
 test-api: ## Run API service tests only
-	pytest tests/api/ -v
+	python -m pytest tests/api/ -v
 
 test-consumer: ## Run Consumer service tests only
-	pytest tests/consumer/ -v
+	python -m pytest tests/consumer/ -v
 
 # ── Linting and Formatting ────────────────────────────────────────────────────
 lint: ## Run ruff linter across all services
-	ruff check services/ libs/
+	python -m ruff check services/ libs/
 
 format: ## Auto-format all Python code with ruff
-	ruff format services/ libs/
+	python -m ruff format services/ libs/
+
+security-check: ## Run quick security hygiene checks
+	python -m ruff check services/ libs/
+	! git grep -nE '(AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|BEGIN (RSA|EC|OPENSSH) PRIVATE KEY)' -- . ':(exclude)services/webapp/node_modules'
 
 # ── Status ────────────────────────────────────────────────────────────────────
 status: ## Show health of running local services

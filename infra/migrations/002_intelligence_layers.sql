@@ -598,3 +598,11 @@ CREATE INDEX IF NOT EXISTS idx_fixed_ticks_time    ON fixed_odds_ticks (race_id,
 CREATE INDEX IF NOT EXISTS idx_behaviour_attribute ON behaviour_observations (runner_id, attribute, stage);
 CREATE INDEX IF NOT EXISTS idx_entity_rel_compound ON entity_relationships (from_type, from_id, to_type);
 CREATE INDEX IF NOT EXISTS idx_discovered_roi      ON discovered_patterns (roi DESC NULLS LAST) WHERE active = true;
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO schema_migrations (version) VALUES ('002_intelligence_layers.sql')
+ON CONFLICT (version) DO NOTHING;

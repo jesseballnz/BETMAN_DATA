@@ -4,7 +4,6 @@ PedigreeAdapter — consumes pedigree data from external stud book providers.
 
 import asyncio
 import structlog
-from typing import List
 
 log = structlog.get_logger(__name__)
 

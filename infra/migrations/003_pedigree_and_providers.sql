@@ -40,3 +40,11 @@ BEGIN
         CREATE INDEX IF NOT EXISTS idx_pedigrees_horse ON pedigrees(horse_uuid);
     END IF;
 END $$;
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO schema_migrations (version) VALUES ('003_pedigree_and_providers.sql')
+ON CONFLICT (version) DO NOTHING;

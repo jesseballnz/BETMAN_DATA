@@ -1,6 +1,10 @@
 import pytest
 
-from app.assistant_service import build_rule_based_plan, enforce_limit, validate_safe_select
+from app.assistant_service import (
+    build_rule_based_plan,
+    enforce_limit,
+    validate_safe_select,
+)
 
 
 def test_enforce_limit_adds_default_limit():

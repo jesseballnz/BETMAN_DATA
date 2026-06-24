@@ -60,6 +60,15 @@ async def fetch_value(request: Request, query: str, *args: Any) -> Any:
         return await conn.fetchval(query, *args)
 
 
+async def execute(request: Request, query: str, *args: Any) -> str | None:
+    pool: asyncpg.Pool | None = getattr(request.app.state, "db_pool", None)
+    if pool is None:
+        return None
+
+    async with pool.acquire() as conn:
+        return await conn.execute(query, *args)
+
+
 async def execute_readonly_query(
     request: Request,
     query: str,

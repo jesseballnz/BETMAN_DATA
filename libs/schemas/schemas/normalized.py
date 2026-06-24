@@ -1,6 +1,7 @@
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
+
 
 class NormalizedRunner(BaseModel):
     provider_id: str
@@ -9,6 +10,7 @@ class NormalizedRunner(BaseModel):
     age: Optional[int] = None
     sex: Optional[str] = None
     color: Optional[str] = None
+
 
 class NormalizedRaceEntry(BaseModel):
     provider_id: str
@@ -20,6 +22,7 @@ class NormalizedRaceEntry(BaseModel):
     trainer_name: Optional[str] = None
     gear_changes: List[str] = Field(default_factory=list)
     sectionals: Dict[str, float] = Field(default_factory=dict)
+
 
 class NormalizedRace(BaseModel):
     provider_id: str
@@ -33,6 +36,7 @@ class NormalizedRace(BaseModel):
     track_direction: Optional[str] = None
     rail_position: Optional[str] = None
     entries: List[NormalizedRaceEntry] = Field(default_factory=list)
+
 
 class NormalizedPedigree(BaseModel):
     provider_id: str

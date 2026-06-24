@@ -2,7 +2,6 @@
 Pedigree router — bloodline performance, sire affinities, and breed-based recommendations.
 """
 
-from typing import Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
@@ -12,38 +11,38 @@ router = APIRouter(prefix="/pedigree", tags=["pedigree"])
 class PedigreeDetail(BaseModel):
     runner_id: int
     runner_name: str
-    sire: Optional[str] = None
-    dam: Optional[str] = None
-    damsire: Optional[str] = None
-    grandsire_pat: Optional[str] = None
-    grandsire_mat: Optional[str] = None
-    family_line: Optional[str] = None
-    colour: Optional[str] = None
+    sire: str | None = None
+    dam: str | None = None
+    damsire: str | None = None
+    grandsire_pat: str | None = None
+    grandsire_mat: str | None = None
+    family_line: str | None = None
+    colour: str | None = None
 
 
 class SirePerformanceItem(BaseModel):
     sire: str
-    track_name: Optional[str] = None
-    surface: Optional[str] = None
-    condition_category: Optional[str] = None
-    distance_band: Optional[str] = None
+    track_name: str | None = None
+    surface: str | None = None
+    condition_category: str | None = None
+    distance_band: str | None = None
     runners: int
     wins: int
-    win_rate: Optional[float] = None
-    place_rate: Optional[float] = None
-    avg_win_price: Optional[float] = None
-    roi: Optional[float] = None
+    win_rate: float | None = None
+    place_rate: float | None = None
+    avg_win_price: float | None = None
+    roi: float | None = None
 
 
 class SireAffinityItem(BaseModel):
     sire: str
     affinity_type: str
-    context_track: Optional[str] = None
-    context_distance_band: Optional[str] = None
-    context_condition: Optional[str] = None
+    context_track: str | None = None
+    context_distance_band: str | None = None
+    context_condition: str | None = None
     affinity_score: float
-    win_rate: Optional[float] = None
-    sample_size: Optional[int] = None
+    win_rate: float | None = None
+    sample_size: int | None = None
 
 
 @router.get("/horses/{runner_id}", response_model=PedigreeDetail)
@@ -58,9 +57,9 @@ async def get_horse_pedigree(runner_id: int):
 @router.get("/sires/{sire_name}/performance", response_model=list[SirePerformanceItem])
 async def get_sire_performance(
     sire_name: str,
-    track_name: Optional[str] = None,
-    condition_category: Optional[str] = None,
-    distance_band: Optional[str] = None,
+    track_name: str | None = None,
+    condition_category: str | None = None,
+    distance_band: str | None = None,
 ):
     """
     Return performance statistics for all progeny of the named sire,
@@ -91,5 +90,6 @@ async def get_top_wet_track_sires(
     """
     Return sires sorted by wet-track ROI. The starting point for rain-day research.
     """
-    # TODO: SELECT from bloodline_performance WHERE condition_category = ? AND runners >= ? ORDER BY roi DESC
+    # TODO: query bloodline_performance by condition_category and runner threshold,
+    # then order by ROI descending.
     return []

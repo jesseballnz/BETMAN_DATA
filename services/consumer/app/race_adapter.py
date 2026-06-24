@@ -9,7 +9,6 @@ publishes race state events to Redis for WebSocket fanout.
 
 import asyncio
 import os
-from typing import List, Dict, Any
 
 import structlog
 

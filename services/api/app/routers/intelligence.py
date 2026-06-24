@@ -144,10 +144,17 @@ async def get_pre_race_intelligence(request: Request, race_id: int):
         race_name=race["race_name"],
         scores=scores,
         track_bias=track_bias,
-        track_conditions=" ".join(filter(None, [race.get("condition_category"), race.get("condition_code")])) or None,
+        track_conditions=" ".join(
+            filter(None, [race.get("condition_category"), race.get("condition_code")])
+        )
+        or None,
         dominant_pattern=pattern["description"] if pattern else None,
         top_signal=(
-            f"{signal['movement_type']} {float(signal['movement_pct']):.1f}% ({float(signal['from_price']):.2f}→{float(signal['to_price']):.2f})"
+            (
+                f"{signal['movement_type']} "
+                f"{float(signal['movement_pct']):.1f}% "
+                f"({float(signal['from_price']):.2f}→{float(signal['to_price']):.2f})"
+            )
             if signal and signal["movement_pct"] is not None
             else None
         ),
@@ -237,8 +244,15 @@ async def get_signal_performance(
                     WHEN re.final_position = 1 THEN lp.closing_price - 1
                     ELSE -1
                END) * 100, 2)::float AS roi,
-               ROUND(COUNT(*) FILTER (WHERE re.final_position = 1)::numeric * 100.0 / NULLIF(COUNT(*), 0), 2)::float AS strike_rate,
-               ROUND((AVG(CASE WHEN re.final_position = 1 THEN 1.0 ELSE 0.0 END) - 0.1) * 100, 2)::float AS edge
+               ROUND(
+                  COUNT(*) FILTER (WHERE re.final_position = 1)::numeric
+                  * 100.0 / NULLIF(COUNT(*), 0),
+                  2
+               )::float AS strike_rate,
+               ROUND(
+                  (AVG(CASE WHEN re.final_position = 1 THEN 1.0 ELSE 0.0 END) - 0.1) * 100,
+                  2
+               )::float AS edge
         FROM market_signals ms
         JOIN race_entries re ON re.id = ms.race_entry_id
         LEFT JOIN latest_prices lp ON lp.race_entry_id = re.id
@@ -256,4 +270,9 @@ async def query_knowledge_graph(
     q: str = Query(..., description="Natural language or structured graph query"),
     limit: int = Query(default=20, le=100),
 ):
-    return {"results": [], "query": q, "limit": limit, "note": "Knowledge graph query engine — Phase 2 implementation"}
+    return {
+        "results": [],
+        "query": q,
+        "limit": limit,
+        "note": "Knowledge graph query engine — Phase 2 implementation",
+    }
