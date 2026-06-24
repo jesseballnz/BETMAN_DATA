@@ -119,41 +119,53 @@ uvicorn app.main:app --reload
 
 The API will be available at `http://localhost:8000`. The OpenAPI docs are at `http://localhost:8000/docs`.
 
-### Data Viewer / Webapp
+### Data Viewer — Demo vs Live
 
-The repository now includes a React + TypeScript + Vite **Data Viewer** at
-`services/webapp/`. It provides six tabs for:
+The repository includes a React + TypeScript + Vite **Data Viewer** at `services/webapp/`. It has six tabs — Overview, Today, Signals, Gates, People, and Ask BETMAN — and ships with **bundled demo fixtures** so it works out of the box with no backend at all.
 
-- warehouse overview / database sizes
-- meetings and races for the day
-- market signals
-- gates / track heatmaps
-- trainer and jockey win-rate boards
-- Ask BETMAN natural-language exact search
+#### Modes
 
-Run the full stack with:
+| Mode | Description | How to activate |
+|------|-------------|-----------------|
+| **Demo** (default) | All six tabs are populated from bundled sample data (`src/lib/demoData.ts`). No network calls are made. Perfect for pitches and local exploration. | App opens in Demo mode automatically. |
+| **Live** | Connects to the real API (`VITE_API_BASE_URL`, default `http://localhost:8000/v1`) and polls for live data. | Click the **Live ⇄ Demo** toggle in the header. |
 
-```bash
-docker compose up --build
-```
+Your preference is saved in `localStorage` across page refreshes.
 
-Endpoints:
-
-- API: `http://localhost:8000/v1`
-- Data Viewer: `http://localhost:8080`
-
-For standalone frontend development:
+#### Option A — Frontend only (Demo mode, no backend needed)
 
 ```bash
 cd services/webapp
 npm install
 npm run dev
+# → http://localhost:5173  (opens in Demo mode)
 ```
 
-Optional frontend env vars:
+#### Option B — Full stack via Docker Compose
 
-- `VITE_API_BASE_URL` (defaults to `http://localhost:8000/v1`)
-- `VITE_API_BEARER_TOKEN` (only needed when bypassing the nginx proxy)
+```bash
+# From the repo root
+docker compose up --build
+# → Data Viewer:  http://localhost:8080  (opens in Demo mode)
+# → API:          http://localhost:8000/v1
+```
+
+Switch the header toggle to **Live** to hit the real API once the full stack is running.
+
+#### Build & lint (CI reference)
+
+```bash
+cd services/webapp
+npm run build   # tsc -b && vite build — must pass with no errors
+npm run lint    # oxlint — must pass with no errors (warnings OK)
+```
+
+#### Optional env vars (frontend)
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `VITE_API_BASE_URL` | `http://localhost:8000/v1` | API base; overridden to `/api/v1` inside Docker |
+| `VITE_API_BEARER_TOKEN` | _(unset)_ | Only needed when bypassing the nginx proxy |
 
 ### Running Migrations
 
