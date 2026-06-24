@@ -99,6 +99,48 @@ export interface SearchResponse {
   results: Array<Record<string, string | number | boolean | null>>
 }
 
+export interface HorseScores {
+  race_id: number
+  race_entry_id: number
+  runner_id: number
+  runner_name: string
+  barrier: number | null
+  bc_score: number | null
+  gas_score: number | null
+  mis_score: number | null
+  sis_score: number | null
+  hfs_score: number | null
+  was_score: number | null
+  bms_score: number | null
+  tbi_score: number | null
+  value_score: number | null
+  alpha_score: number | null
+  market_price: number | null
+  implied_probability: number | null
+  betman_probability: number | null
+  calculated_at: string | null
+}
+
+export interface PreRaceIntelligence {
+  race_id: number
+  race_name: string
+  scores: HorseScores[]
+  track_bias: Record<string, number> | null
+  track_conditions: string | null
+  dominant_pattern: string | null
+  top_signal: string | null
+}
+
+export interface SignalPerformanceItem {
+  signal_type: string
+  period_days: number
+  bets: number
+  winners: number
+  roi: number | null
+  strike_rate: number | null
+  edge: number | null
+}
+
 interface RaceQueryOptions {
   date?: string
   track?: string
@@ -225,4 +267,8 @@ export const api = {
   askBetman: (question: string) => request<AssistantResponse>('/assistant/query', { method: 'POST', body: JSON.stringify({ question }) }),
   searchOcr: (query: string, limit = 20) => request<SearchResponse>(withQuery('/search/ocr', { q: query, limit })),
   searchTranscripts: (query: string, limit = 20) => request<SearchResponse>(withQuery('/search/transcripts', { q: query, limit })),
+  getIntelligenceLeaderboard: (raceDate?: string, minAlpha = 70, limit = 20) =>
+    request<HorseScores[]>(withQuery('/intelligence/scores/leaderboard', { race_date: raceDate, min_alpha: minAlpha, limit })),
+  getRaceIntelligence: (raceId: number) => request<PreRaceIntelligence>(`/intelligence/races/${raceId}/intelligence`),
+  getSignalPerformance: (periodDays = 30) => request<SignalPerformanceItem[]>(withQuery('/intelligence/signals/performance', { period_days: periodDays })),
 }
