@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -27,6 +28,10 @@ async def live_feed(websocket: WebSocket, feed_id: str) -> None:
         await websocket.close(code=4401, reason="Invalid API key")
         return
 
+    if not tenant.get("active"):
+        await websocket.close(code=4403, reason="Tenant inactive")
+        return
+
     await websocket.accept()
     await websocket.send_json(
         {
@@ -46,13 +51,16 @@ async def live_feed(websocket: WebSocket, feed_id: str) -> None:
     channels = [f"betman:feeds:{feed_id}:live", "betman:races:odds", "betman:races:results"]
     await pubsub.subscribe(*channels)
     try:
+        last_heartbeat = time.monotonic()
         while True:
+            # Poll for a message with a short timeout so heartbeats are never
+            # delayed by a full heartbeat_seconds sleep.
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if message and message.get("data"):
                 payload = json.loads(message["data"])
                 payload.setdefault("feed_id", feed_id)
                 await websocket.send_json(payload)
-            else:
+            elif time.monotonic() - last_heartbeat >= settings.websocket_heartbeat_seconds:
                 await websocket.send_json(
                     {
                         "event": "heartbeat",
@@ -60,7 +68,7 @@ async def live_feed(websocket: WebSocket, feed_id: str) -> None:
                         "timestamp": datetime.now(UTC).isoformat(),
                     }
                 )
-                await asyncio.sleep(settings.websocket_heartbeat_seconds)
+                last_heartbeat = time.monotonic()
     except WebSocketDisconnect:
         return
     finally:

@@ -27,6 +27,19 @@
 - request logs include request ids and tenant ids
 - admin key lifecycle changes are written to `audit_log`
 
+## Metrics access control
+
+`/v1/metrics` exposes per-path request counts and latency buckets.  This
+telemetry is sensitive (reveals traffic patterns and error rates) so it is
+**not public by default**.
+
+| `METRICS_PUBLIC` env var | Behaviour |
+|--------------------------|-----------|
+| `false` (default) | Requires an admin-scoped API key |
+| `true` | Accessible without authentication (use behind an internal scrape proxy) |
+
+`/v1/health` and `/v1/ready` remain public regardless of this setting.
+
 ## Initial target SLOs
 
 - API availability: **99.9% monthly**

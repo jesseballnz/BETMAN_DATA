@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # Security
     admin_api_key: str = ""
     platform_master_key: str = ""
+    metrics_public: bool = False
 
     # CORS
     cors_origins: str = "http://localhost:5173,http://localhost:8080"
