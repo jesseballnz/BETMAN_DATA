@@ -50,11 +50,12 @@ WEBAPP_PREFIX=$(pbkdf2_prefix "WEBAPP_READONLY_API_KEY")
 export PGOPTIONS="-c app.admin_api_key_hash=${ADMIN_HASH} -c app.admin_api_key_prefix=${ADMIN_PREFIX} -c app.webapp_readonly_api_key_hash=${WEBAPP_HASH} -c app.webapp_readonly_api_key_prefix=${WEBAPP_PREFIX}"
 
 # ---------------------------------------------------------------------------
-# Run all four migrations (each is idempotent via IF NOT EXISTS + ON CONFLICT)
+# Run all migrations (each is idempotent via IF NOT EXISTS + ON CONFLICT)
 # ---------------------------------------------------------------------------
 psql -f "${MIGRATION_DIR}/001_initial_schema.sql"
 psql -f "${MIGRATION_DIR}/002_intelligence_layers.sql"
 psql -f "${MIGRATION_DIR}/003_pedigree_and_providers.sql"
 psql -f "${MIGRATION_DIR}/004_api_keys_and_security.sql"
+psql -f "${MIGRATION_DIR}/005_pedigree_reconciliation.sql"
 
 echo "All migrations applied successfully."

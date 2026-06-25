@@ -1,7 +1,5 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 from pydantic import BaseModel
-
-from app.compliance import get_compliance_rule
 
 router = APIRouter(prefix="/skins", tags=["skins"])
 
@@ -52,7 +50,7 @@ class SkinResponse(BaseModel):
     compliance: SkinCompliance
 
 
-@router.get("/{tenant_slug}", response_model=SkinResponse, summary="Resolve tenant skin")
+@router.get("/{tenant_slug}", summary="Resolve tenant skin")
 async def resolve_skin(
     tenant_slug: str,
     race_class: str | None = Query(None, description="Activate class-specific skin, e.g. G1"),
@@ -65,36 +63,12 @@ async def resolve_skin(
     colors, logos, feature flags, active ad placements, and licensed feeds —
     ready to apply directly to a front-end renderer.
 
-    Context resolution hierarchy (highest priority wins):
-      race > meeting > race_class > global
+    Not yet implemented — skin/tenant DB resolution is pending.
     """
-    # TODO: query tenants + skins + skin_contexts with priority resolution
-    # TODO: resolve active ads from ad_placements
-    # TODO: resolve tenant_feeds for this tenant
-    compliance = get_compliance_rule("NZ")
-    return SkinResponse(
-        tenant=tenant_slug,
-        skin_id=0,
-        skin_name="Default",
-        context_type="global",
-        context_ref=None,
-        config={
-            "colors": {},
-            "typography": {},
-            "layout": {},
-            "features": {
-                "commentary_replay": True,
-                "race_story": True,
-                "similarity_search": False,
-                "live_websocket": True,
-                "show_odds": True,
-            },
-            "compliance": compliance,
-        },
-        assets=SkinAssets(),
-        active_ads=[],
-        feeds=[],
-        compliance=SkinCompliance(**compliance),
+    return Response(
+        status_code=501,
+        content='{"detail":"Tenant skin resolution is not yet implemented"}',
+        media_type="application/json",
     )
 
 
