@@ -1,0 +1,11 @@
+[Unit]
+Description=Run BETMAN Data TAB thoroughbred poller every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=betman-data-tab-poller.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,21 @@
+[Unit]
+Description=BETMAN Data high-frequency retention prune
+After=network-online.target postgresql.service betman-data-tab-poller.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/betman/betman_data
+Environment=BETMAN_DATA_ROOT=/opt/betman/betman_data
+Environment=BETMAN_DATA_HIGH_FREQUENCY_RETENTION_DAYS=7
+Environment=BETMAN_DATA_SMART_MONEY_RETENTION_DAYS=2
+Environment=BETMAN_DATA_PRUNE_BATCH_SIZE=5000
+Environment=BETMAN_DATA_PRUNE_MAX_BATCHES=100
+ExecStart=/opt/betman/betman_data/scripts/prune_data_retention.sh
+User=root
+Group=root
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+StandardOutput=append:/var/log/betman/betman-data-retention-prune.out.log
+StandardError=append:/var/log/betman/betman-data-retention-prune.err.log

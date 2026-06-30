@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { ColDef, ValueGetterParams } from 'ag-grid-community'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { AllCommunityModule, ModuleRegistry, type ColDef, type ValueGetterParams } from 'ag-grid-community'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import ReactECharts from 'echarts-for-react'
-import { Database, Gauge, Map, Search, Sparkles, Users } from 'lucide-react'
+import { Database, Gauge, KeyRound, Map, Search, Sparkles, Users } from 'lucide-react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 
 import { Button } from './components/ui/button'
@@ -14,6 +14,10 @@ import {
   POLLING_INTERVALS,
   api,
   buildLiveWebSocketUrl,
+  clearDataToken,
+  getDataToken,
+  loginWithData,
+  setDataToken,
   type AssistantResponse,
   type BarrierResponse,
   type HealthResponse,
@@ -22,8 +26,11 @@ import {
   type OddsResponse,
   type PeopleResponse,
   type RaceDetail,
+  type RacingPulseResponse,
   type SignalPerformanceItem,
   type StatsOverview,
+  type WarehouseOverview,
+  type WarehouseTable,
 } from './lib/api'
 import {
   DEMO_ANSWERS,
@@ -47,6 +54,8 @@ import {
 } from './lib/demoData'
 import { useMode } from './lib/ModeContext'
 import { cn, formatBytes, formatDateTime, formatNumber, formatPercent } from './lib/utils'
+
+ModuleRegistry.registerModules([AllCommunityModule])
 
 const navigation = [
   { to: '/', label: 'Overview', icon: Database },
@@ -72,7 +81,23 @@ function getSignalType(item: { signal_type?: string; indicator_type?: string; pa
   return item.signal_type ?? item.indicator_type ?? item.pattern_type ?? 'signal'
 }
 
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function App() {
+  const [token, setToken] = useState(() => getDataToken())
+  if (!token) return <LoginPage onLogin={setToken} />
+  return <AuthenticatedApp onLogout={() => {
+    clearDataToken()
+    setToken(null)
+  }} />
+}
+
+function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const { mode, setMode } = useMode()
   const queryClient = useQueryClient()
   const [hintDismissed, setHintDismissed] = useState(() => {
@@ -175,6 +200,13 @@ function App() {
                   {label}
                 </NavLink>
               ))}
+              <button
+                type="button"
+                onClick={onLogout}
+                className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-2 text-sm text-slate-400 transition duration-300 hover:border-slate-700 hover:text-slate-100"
+              >
+                Sign out
+              </button>
             </nav>
           </div>
           <div className="mt-4 flex flex-col gap-3">
@@ -226,6 +258,151 @@ function App() {
   )
 }
 
+function LoginPage({ onLogin }: { onLogin: (token: string) => void }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [setupLoading, setSetupLoading] = useState(false)
+  const [scrollFade, setScrollFade] = useState(1)
+
+  useEffect(() => {
+    const updateFade = () => {
+      const progress = Math.min(window.scrollY / 260, 1)
+      setScrollFade(1 - progress * 0.92)
+    }
+    updateFade()
+    window.addEventListener('scroll', updateFade, { passive: true })
+    return () => window.removeEventListener('scroll', updateFade)
+  }, [])
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      const result = await loginWithData(username, password)
+      setDataToken(result.access_token)
+      onLogin(result.access_token)
+    } catch {
+      setError('Invalid username or password. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const requestPasswordSetup = async () => {
+    setError('')
+    const email = username.trim()
+    if (!email) {
+      setError('Enter your account email first, then choose Set password.')
+      return
+    }
+    setSetupLoading(true)
+    try {
+      const response = await fetch('/password-setup-link', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok || result?.ok === false) {
+        if (result?.error === 'subscription_required' && result?.paymentLink) {
+          setError('Subscription required. Activate your plan from the signup page, then set your password.')
+        } else if (result?.error === 'user_not_found') {
+          setError('No Stripe account found for that email.')
+        } else {
+          setError(`Setup failed: ${result?.error || 'unknown_error'}.`)
+        }
+        return
+      }
+      if (result?.setupLink) {
+        window.location.href = result.setupLink
+        return
+      }
+      setError('Setup failed: no setup link returned.')
+    } catch {
+      setError('Setup unavailable. Please try again.')
+    } finally {
+      setSetupLoading(false)
+    }
+  }
+
+  return (
+    <div className="flex min-h-[145vh] items-start justify-center bg-gray-950 px-4 pt-[14vh] text-gray-100 sm:pt-[18vh]">
+      <div
+        className="w-full max-w-sm transition-[opacity,transform] duration-700 ease-out"
+        style={{
+          opacity: scrollFade,
+          transform: `translateY(-${(1 - scrollFade) * 18}px)`,
+          pointerEvents: scrollFade < 0.18 ? 'none' : 'auto',
+        }}
+      >
+        <div className="mb-8 flex flex-col items-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-orange-500/40 bg-orange-500/20">
+            <Database className="h-7 w-7 text-orange-400" />
+          </div>
+          <h1 className="text-2xl font-bold tracking-wide text-white">
+            BETMAN <span className="text-orange-400">Data</span>
+          </h1>
+          <p className="mt-1 text-sm text-gray-400">Sign in to continue</p>
+          <p className="mt-1 text-xs font-bold uppercase tracking-wide text-gray-500">Private warehouse access</p>
+        </div>
+
+        <form onSubmit={submit} className="flex flex-col gap-5 rounded-xl border border-gray-800 bg-gray-900 p-6">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="username" className="text-sm font-medium text-gray-300">Username</label>
+            <Input
+              id="username"
+              type="text"
+              autoComplete="username"
+              autoFocus
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              disabled={loading}
+              placeholder="Enter your username"
+              className="border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 focus:border-orange-500 focus:ring-orange-500"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="password" className="text-sm font-medium text-gray-300">Password</label>
+            <Input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              disabled={loading}
+              placeholder="Enter your password"
+              className="border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 focus:border-orange-500 focus:ring-orange-500"
+            />
+          </div>
+          {error ? <p className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-sm text-red-400">{error}</p> : null}
+          <button
+            type="submit"
+            disabled={loading || setupLoading || !username || !password}
+            className="w-full rounded-lg bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? 'Signing in...' : 'Sign in'}
+          </button>
+          <div className="border-t border-gray-800 pt-4 text-center">
+            <p className="text-xs text-gray-400">New after Stripe checkout? Enter your email, then set your password.</p>
+            <button
+              type="button"
+              onClick={requestPasswordSetup}
+              disabled={loading || setupLoading || !username.trim()}
+              className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-orange-500/40 px-4 py-2.5 text-sm font-semibold text-orange-300 transition-colors hover:border-orange-400 hover:bg-orange-500/10 hover:text-orange-200"
+            >
+              <KeyRound className="h-4 w-4" />
+              {setupLoading ? 'Requesting setup...' : 'Set password'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 function OverviewView() {
   const { mode } = useMode()
   const { data, isLoading, error } = useQuery({
@@ -234,86 +411,210 @@ function OverviewView() {
     refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.stats,
     staleTime: mode === 'demo' ? Infinity : 0,
   })
-  const [livePulse, setLivePulse] = useState<number[]>([])
-
-  useEffect(() => {
-    if (!data) return
-    const pulsePoint = Object.values(data.ingestion_last_24h).reduce((acc, value) => {
-      return typeof value === 'number' ? acc + value : acc
-    }, 0)
-    setLivePulse((current) => [...current.slice(-29), pulsePoint])
-  }, [data])
-
+  const warehouse = useQuery({
+    queryKey: ['warehouse-overview', mode],
+    queryFn: mode === 'demo' ? () => Promise.resolve(null) : api.getWarehouseOverview,
+    enabled: mode === 'live',
+    refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.stats,
+    staleTime: mode === 'demo' ? Infinity : 0,
+  })
+  const pulse = useQuery({
+    queryKey: ['racing-pulse', mode],
+    queryFn: mode === 'demo' ? () => Promise.resolve(null) : () => api.getRacingPulse({ limit: 12 }),
+    enabled: mode === 'live',
+    refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.stats,
+    staleTime: mode === 'demo' ? Infinity : 0,
+  })
   const chartOption = useMemo(() => buildWarehouseChart(data), [data])
-  const pulseOption = useMemo(() => buildOverviewPulseChart(livePulse), [livePulse])
+  const architectureOption = useMemo(() => buildWarehouseArchitectureChart(warehouse.data ?? undefined), [warehouse.data])
+  const systemSizeOption = useMemo(() => buildWarehouseSystemSizeChart(warehouse.data ?? undefined), [warehouse.data])
+  const racingCoverageOption = useMemo(() => buildRacingCoverageChart(pulse.data ?? undefined), [pulse.data])
 
   const latestOdds = data?.freshness.latest_odds_snapshot
   const freshnessMinutes = latestOdds ? Math.max(0, Math.round((Date.now() - new Date(latestOdds).getTime()) / 60000)) : null
+  const warehouseRows = warehouse.data?.databases.reduce((acc, database) => acc + database.row_count, 0) ?? data?.tables.reduce((acc, table) => acc + table.approx_rows, 0)
+  const warehouseSize = warehouse.data?.databases.reduce((acc, database) => acc + database.total_size_bytes, 0) ?? data?.database.total_size_bytes
+  const hotTables = warehouse.data?.hot_tables ?? []
+  const largeTables = warehouse.data?.large_tables ?? []
+  const bottlenecks = warehouse.data?.bottlenecks ?? []
 
   return (
     <div className="space-y-4">
-      <SectionHeader title="Overview" subtitle="Mission dashboard: ingestion, freshness, and warehouse intelligence in one frame." />
-      <ErrorBanner error={error} />
+      <SectionHeader title="Warehouse" subtitle="System architecture, database inventory, hot tables, large tables, and operational pressure points." />
+      <ErrorBanner error={(error as Error | null) ?? (warehouse.error as Error | null) ?? (pulse.error as Error | null)} />
 
       <Card className="relative overflow-hidden border-cyan-900/40 bg-gradient-to-br from-slate-950 to-slate-900/90">
-        <div className="absolute -right-16 -top-16 h-52 w-52 rounded-full bg-cyan-500/12 blur-3xl" />
-        <div className="absolute -left-10 bottom-0 h-32 w-32 rounded-full bg-indigo-500/12 blur-2xl" />
         <div className="relative z-10 grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
           <div>
-            <p className="text-xs uppercase tracking-[0.35em] text-cyan-400">Live Control Surface</p>
-            <h3 className="mt-2 text-3xl font-semibold text-white">Overlay the noise, expose the edge.</h3>
-            <p className="mt-2 text-sm text-slate-300">Auto-refreshing telemetry from the BETMAN warehouse with visual cues for freshness and ingestion pulse.</p>
+            <p className="text-xs uppercase tracking-[0.35em] text-cyan-400">Warehouse Control Surface</p>
+            <h3 className="mt-2 text-3xl font-semibold text-white">See the data estate, not just the tables.</h3>
+            <p className="mt-2 text-sm text-slate-300">BETMAN Data, Core, Heatmap, LineForge, and RuView in one operations view with source freshness and bottleneck flags.</p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <SmallStat label="Warehouse" value={formatBytes(data?.database.total_size_bytes)} />
-              <SmallStat label="Tables" value={formatNumber(data?.database.table_count)} />
-              <SmallStat label="Rows surfaced" value={formatNumber(data?.tables.reduce((acc, table) => acc + table.approx_rows, 0))} />
+              <SmallStat label="Databases" value={formatNumber(warehouse.data?.databases.length ?? 1)} />
+              <SmallStat label="Warehouse size" value={formatBytes(warehouseSize)} />
+              <SmallStat label="Rows surfaced" value={formatNumber(warehouseRows)} />
               <SmallStat label="Freshness" value={freshnessMinutes === null ? 'No odds yet' : `${freshnessMinutes} min ago`} />
             </div>
           </div>
-          <div className="h-[280px] rounded-xl border border-cyan-900/40 bg-slate-950/70 p-2">
-            <ReactECharts option={pulseOption} style={{ height: '100%' }} />
+          <div className="h-[300px] rounded-xl border border-cyan-900/40 bg-slate-950/70 p-2">
+            {warehouse.isLoading ? <ChartSkeleton /> : <ReactECharts option={architectureOption} style={{ height: '100%' }} />}
           </div>
         </div>
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-4">
-        <MetricCard label="Warehouse size" value={formatBytes(data?.database.total_size_bytes)} loading={isLoading} tone="cyan" />
-        <MetricCard label="Races today" value={formatNumber(data?.counts.races_today)} loading={isLoading} tone="indigo" />
+        <MetricCard label="Warehouse size" value={formatBytes(warehouseSize)} loading={isLoading || warehouse.isLoading} tone="cyan" />
+        <MetricCard label="Databases" value={formatNumber(warehouse.data?.databases.length ?? 1)} loading={warehouse.isLoading} tone="indigo" />
         <MetricCard
-          label="Ingestion / 24h"
-          value={formatNumber((data?.ingestion_last_24h.odds_snapshots_24h ?? 0) + (data?.ingestion_last_24h.weather_readings_24h ?? 0) + (data?.ingestion_last_24h.media_segments_24h ?? 0))}
-          loading={isLoading}
+          label="Hot tables"
+          value={formatNumber(hotTables.filter((table) => table.read_ops > 0).length)}
+          loading={warehouse.isLoading}
           tone="teal"
         />
         <MetricCard
-          label="Live freshness"
-          value={freshnessMinutes === null ? '—' : `${freshnessMinutes} min`}
-          loading={isLoading}
-          tone={freshnessMinutes !== null && freshnessMinutes <= 10 ? 'emerald' : 'amber'}
+          label="Bottlenecks"
+          value={formatNumber(bottlenecks.length)}
+          loading={warehouse.isLoading}
+          tone={bottlenecks.some((item) => item.severity === 'high') ? 'rose' : bottlenecks.length ? 'amber' : 'emerald'}
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-        <Card className="min-h-[420px]">
-          <PanelTitle title="Warehouse footprint" subtitle="Largest tables and row density." />
-          <div className="mt-4 h-[320px]">
-            {isLoading ? (
-              <ChartSkeleton />
-            ) : (
+      <Card className="border-emerald-900/40 bg-slate-950/80">
+        <div className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
+          <div>
+            <PanelTitle title="Live thoroughbred racing pulse" subtitle="Real warehouse coverage from TAB race fields, results, people, tracks, and market prices." />
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <SmallStat label="Races" value={formatNumber(pulse.data?.totals.races)} />
+              <SmallStat label="Runners" value={formatNumber(pulse.data?.totals.runners)} />
+              <SmallStat label="Jockeys" value={formatNumber(pulse.data?.totals.jockeys)} />
+              <SmallStat label="Trainers" value={formatNumber(pulse.data?.totals.trainers)} />
+              <SmallStat label="Tracks" value={formatNumber(pulse.data?.totals.tracks)} />
+              <SmallStat label="Latest race date" value={pulse.data?.totals.latest_meeting_date ?? 'Awaiting live data'} />
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <SmallStat label="Priced runners" value={formatNumber(pulse.data?.market.priced_runners)} />
+              <SmallStat label="Favourite strike" value={pulse.data?.market.favourite_win_rate === null || pulse.data?.market.favourite_win_rate === undefined ? '—' : formatPercent(pulse.data.market.favourite_win_rate)} />
+              <SmallStat label="Avg closing price" value={pulse.data?.market.avg_closing_price ? `$${pulse.data.market.avg_closing_price.toFixed(2)}` : '—'} />
+              <SmallStat label="Freshest price" value={formatDateTime(pulse.data?.market.latest_price_at)} />
+            </div>
+          </div>
+          <div className="h-[360px]">
+            {pulse.isLoading ? <ChartSkeleton /> : <ReactECharts option={racingCoverageOption} style={{ height: '100%' }} />}
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
+        <Card>
+          <PanelTitle title="People in form" subtitle="Top live thoroughbred jockeys and trainers by wins in the warehouse." />
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <PulsePeopleList title="Jockeys" rows={pulse.data?.top_jockeys ?? []} />
+            <PulsePeopleList title="Trainers" rows={pulse.data?.top_trainers ?? []} />
+          </div>
+        </Card>
+        <Card>
+          <PanelTitle title="Busy tracks and race classes" subtitle="Where the racing data volume is concentrated." />
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="h-[260px]">
               <Grid
-                rows={data?.tables ?? []}
+                rows={(pulse.data?.track_activity ?? []) as unknown as Array<Record<string, unknown>>}
                 columns={[
-                  { field: 'table_name', headerName: 'Table' },
-                  { field: 'approx_rows', headerName: 'Rows' },
-                  { field: 'total_bytes', headerName: 'Total bytes' },
+                  { field: 'track_name', headerName: 'Track', minWidth: 170 },
+                  { field: 'runners', headerName: 'Runners' },
+                  { field: 'races', headerName: 'Races' },
+                  { field: 'avg_field_size', headerName: 'Avg field' },
                 ]}
               />
+            </div>
+            <div className="h-[260px]">
+              <Grid
+                rows={(pulse.data?.race_class_activity ?? []) as unknown as Array<Record<string, unknown>>}
+                columns={[
+                  { field: 'race_class', headerName: 'Class', minWidth: 140 },
+                  { field: 'runners', headerName: 'Runners' },
+                  { field: 'races', headerName: 'Races' },
+                  { field: 'avg_field_size', headerName: 'Avg field' },
+                ]}
+              />
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+        <Card className="min-h-[420px]">
+          <PanelTitle title="Database estate" subtitle="Core systems, engines, hosts, size, and row coverage." />
+          <div className="mt-4 grid gap-3">
+            {(warehouse.data?.databases ?? []).map((database) => (
+              <div key={`${database.system}-${database.name}`} className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">{database.system}</div>
+                    <div className="text-xs text-slate-400">{database.engine} • {database.name} • {database.host}</div>
+                  </div>
+                  <div className="text-right text-xs text-slate-300">
+                    <div>{formatBytes(database.total_size_bytes)}</div>
+                    <div>{formatNumber(database.table_count)} tables</div>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <SmallStat label="Rows" value={formatNumber(database.row_count)} />
+                  <SmallStat label="Hot" value={formatNumber(database.hot_tables.filter((table) => table.read_ops > 0).length)} />
+                  <SmallStat label="Source" value={database.source.replace(/_/g, ' ')} />
+                </div>
+              </div>
+            ))}
+            {!warehouse.data?.databases.length && <EmptyState title="Live warehouse map unavailable" description="Switch to Live mode to inspect connected databases." />}
+          </div>
+        </Card>
+        <Card>
+          <PanelTitle title="System weight" subtitle="Storage share across BETMAN databases." />
+          <div className="mt-4 h-[380px]">{warehouse.isLoading ? <ChartSkeleton /> : <ReactECharts option={systemSizeOption} style={{ height: '100%' }} />}</div>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+        <Card className="min-h-[420px]">
+          <PanelTitle title="Hot tables" subtitle="Read pressure and access activity across the estate." />
+          <div className="mt-4 h-[340px]">
+            {warehouse.isLoading ? (
+              <ChartSkeleton />
+            ) : (
+              <WarehouseTableGrid rows={hotTables} />
             )}
           </div>
         </Card>
         <Card>
-          <PanelTitle title="Storage profile" subtitle="Top table sizes (live)." />
-          <div className="mt-4 h-[360px]">{isLoading ? <ChartSkeleton /> : <ReactECharts option={chartOption} style={{ height: '100%' }} />}</div>
+          <PanelTitle title="Bottleneck watch" subtitle="Visible pressure points from table stats and inventory." />
+          <div className="mt-4 space-y-2">
+            {bottlenecks.length ? bottlenecks.slice(0, 8).map((item) => (
+              <div key={`${item.system}-${item.table_name}-${item.message}`} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">{item.system} / {item.table_name}</div>
+                    <div className="text-xs text-slate-400">{item.message}</div>
+                  </div>
+                  <span className={cn('rounded px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em]', bottleneckTone(item.severity))}>{item.severity}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.16em] text-slate-400">
+                  {(item.flags ?? []).map((flag) => <span key={flag} className="rounded bg-slate-800 px-2 py-1">{flag.replace(/_/g, ' ')}</span>)}
+                </div>
+              </div>
+            )) : <EmptyState title="No obvious bottlenecks" description="No high-pressure tables are visible from current stats." />}
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+        <Card className="min-h-[420px]">
+          <PanelTitle title="Large tables" subtitle="Biggest storage consumers across BETMAN data systems." />
+          <div className="mt-4 h-[320px]">
+            {warehouse.isLoading ? <ChartSkeleton /> : <WarehouseTableGrid rows={largeTables} />}
+          </div>
+        </Card>
+        <Card>
+          <PanelTitle title="BETMAN Data storage profile" subtitle="Top warehouse table sizes in live Postgres." />
+          <div className="mt-4 h-[300px]">{isLoading ? <ChartSkeleton /> : <ReactECharts option={chartOption} style={{ height: '100%' }} />}</div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <SmallStat label="Odds snapshots / 24h" value={formatNumber(data?.ingestion_last_24h.odds_snapshots_24h)} />
             <SmallStat label="Weather / 24h" value={formatNumber(data?.ingestion_last_24h.weather_readings_24h)} />
@@ -328,7 +629,7 @@ function OverviewView() {
 
 function TodayView() {
   const { mode } = useMode()
-  const today = new Date().toISOString().slice(0, 10)
+  const today = formatLocalDate(new Date())
   const meetingsQuery = useQuery({
     queryKey: ['meetings', today, mode],
     queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_MEETINGS) : () => api.getMeetings(today),
@@ -343,6 +644,7 @@ function TodayView() {
   })
   const [selectedRaceId, setSelectedRaceId] = useState<number | null>(null)
 
+  const meetings = meetingsQuery.data?.meetings ?? []
   const raceId = selectedRaceId ?? racesQuery.data?.races[0]?.id ?? null
   const [raceDetail, odds] = useQueries({
     queries: [
@@ -375,12 +677,14 @@ function TodayView() {
           <div className="mt-4 space-y-3">
             {meetingsQuery.isLoading ? (
               <LoadingTile />
-            ) : meetingsQuery.data?.meetings.length ? (
-              meetingsQuery.data.meetings.map((meeting) => (
+            ) : meetings.length ? (
+              meetings.map((meeting) => {
+                const meetingRaces = Array.isArray(meeting.races) ? meeting.races : []
+                return (
                 <button
                   key={meeting.id}
                   type="button"
-                  onClick={() => setSelectedRaceId(meeting.races[0]?.id ?? null)}
+                  onClick={() => setSelectedRaceId(meetingRaces[0]?.id ?? null)}
                   aria-label={`Open ${meeting.track_name} meeting`}
                   className="w-full rounded-lg border border-slate-800 bg-slate-900/80 p-3 text-left transition hover:border-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                 >
@@ -392,7 +696,7 @@ function TodayView() {
                     <div className="text-sm text-cyan-300">{meeting.race_count} races</div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400" role="list" aria-label={`${meeting.track_name} races`}>
-                    {meeting.races.map((race) => (
+                    {meetingRaces.map((race) => (
                       <button
                         key={race.id}
                         type="button"
@@ -409,7 +713,8 @@ function TodayView() {
                     ))}
                   </div>
                 </button>
-              ))
+                )
+              })
             ) : (
               <EmptyState title="No meetings yet" description="When race data lands, this board will light up." />
             )}
@@ -678,7 +983,7 @@ function GatesView() {
     staleTime: mode === 'demo' ? Infinity : 0,
   })
   const [trackName, setTrackName] = useState<string>('')
-  const [surface, setSurface] = useState<string>('turf')
+  const [surface, setSurface] = useState<string>('all')
   const [conditionCategory, setConditionCategory] = useState<string>('all')
   const [distancePreset, setDistancePreset] = useState<string>('all')
 
@@ -727,9 +1032,12 @@ function GatesView() {
             ))}
           </Select>
           <Select value={surface} onChange={(event) => setSurface(event.target.value)}>
+            <option value="all">All surfaces</option>
+            <option value="Grass">Grass</option>
             <option value="turf">Turf</option>
-            <option value="synthetic">Synthetic</option>
+            <option value="Synthetic">Synthetic</option>
             <option value="dirt">Dirt</option>
+            <option value="unknown">Unknown</option>
           </Select>
           <Select value={conditionCategory} onChange={(event) => setConditionCategory(event.target.value)}>
             <option value="all">All conditions</option>
@@ -793,17 +1101,24 @@ function PeopleView() {
     staleTime: mode === 'demo' ? Infinity : 0,
   })
   const [trackName, setTrackName] = useState<string>('')
+  const [windowDays, setWindowDays] = useState<string>('30')
+  const dateFrom = useMemo(() => {
+    if (windowDays === 'all') return undefined
+    const date = new Date()
+    date.setDate(date.getDate() - Number(windowDays))
+    return date.toISOString().slice(0, 10)
+  }, [windowDays])
   const [trainerRates, jockeyRates] = useQueries({
     queries: [
       {
-        queryKey: ['trainer-rates', trackName, mode],
-        queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_TRAINERS) : () => api.getTrainerWinRates({ track: trackName || undefined, limit: 20 }),
+        queryKey: ['trainer-rates', trackName, dateFrom, mode],
+        queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_TRAINERS) : () => api.getTrainerWinRates({ track: trackName || undefined, date_from: dateFrom, limit: 30, min_runners: 3, order_by: 'wins' }),
         refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.people,
         staleTime: mode === 'demo' ? Infinity : 0,
       },
       {
-        queryKey: ['jockey-rates', trackName, mode],
-        queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_JOCKEYS) : () => api.getJockeyWinRates({ track: trackName || undefined, limit: 20 }),
+        queryKey: ['jockey-rates', trackName, dateFrom, mode],
+        queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_JOCKEYS) : () => api.getJockeyWinRates({ track: trackName || undefined, date_from: dateFrom, limit: 30, min_runners: 3, order_by: 'wins' }),
         refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.people,
         staleTime: mode === 'demo' ? Infinity : 0,
       },
@@ -815,15 +1130,21 @@ function PeopleView() {
 
   return (
     <div className="space-y-4">
-      <SectionHeader title="People" subtitle="Trainer and jockey leaderboards with visual win-rate context." />
+      <SectionHeader title="People" subtitle="Trainer and jockey leaderboards from real thoroughbred fields, results, and prices." />
       <Card className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <PanelTitle title="Filter context" subtitle="Track-level splits with live recalculation." />
-        <div className="w-full max-w-sm">
+        <PanelTitle title="Filter context" subtitle="Recent form windows with live recalculation." />
+        <div className="grid w-full gap-3 sm:grid-cols-2 lg:max-w-xl">
           <Select value={trackName} onChange={(event) => setTrackName(event.target.value)}>
             <option value="">All tracks</option>
             {(tracks.data?.tracks ?? []).map((track) => (
               <option key={track.track_name} value={track.track_name}>{track.track_name}</option>
             ))}
+          </Select>
+          <Select value={windowDays} onChange={(event) => setWindowDays(event.target.value)}>
+            <option value="30">Last 30 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="7">Last 7 days</option>
+            <option value="all">All loaded data</option>
           </Select>
         </div>
       </Card>
@@ -1059,6 +1380,34 @@ function PeoplePanel({ title, data }: { title: string; data?: PeopleResponse }) 
   )
 }
 
+function PulsePeopleList({ title, rows }: { title: string; rows: PeopleResponse['items'] }) {
+  const topRows = rows.slice(0, 6)
+  return (
+    <div className="space-y-2">
+      <div className="text-xs uppercase tracking-[0.22em] text-slate-500">{title}</div>
+      {topRows.length ? topRows.map((item, index) => (
+        <div key={`${title}-${item.person}`} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs text-cyan-400">#{index + 1}</div>
+              <div className="text-sm font-semibold text-white">{item.person}</div>
+            </div>
+            <div className="text-right text-xs text-slate-300">
+              <div>{formatNumber(item.wins)} wins</div>
+              <div>{formatPercent(item.win_rate)}</div>
+            </div>
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-slate-400">
+            <span>{formatNumber(item.runners)} runners</span>
+            <span>{formatNumber(item.places)} places</span>
+            <span>ROI {item.roi === null ? '—' : formatPercent(item.roi)}</span>
+          </div>
+        </div>
+      )) : <EmptyState title="No people data" description="Live thoroughbred results will appear here once loaded." />}
+    </div>
+  )
+}
+
 function Grid({
   rows,
   columns,
@@ -1068,8 +1417,26 @@ function Grid({
 }) {
   return (
     <div className="ag-theme-quartz-dark h-full w-full overflow-hidden rounded-lg border border-slate-800">
-      <AgGridReact rowData={rows} columnDefs={columns} pagination={rows.length > 12} domLayout="normal" />
+      <AgGridReact rowData={rows} columnDefs={columns} pagination={rows.length > 12} domLayout="normal" theme="legacy" />
     </div>
+  )
+}
+
+function WarehouseTableGrid({ rows }: { rows: WarehouseTable[] }) {
+  return (
+    <Grid
+      rows={rows as unknown as Array<Record<string, unknown>>}
+      columns={[
+        { field: 'system', headerName: 'System', minWidth: 140 },
+        { field: 'database', headerName: 'DB', minWidth: 120 },
+        { field: 'table_name', headerName: 'Table', minWidth: 180 },
+        { field: 'approx_rows', headerName: 'Rows', valueFormatter: (params) => formatNumber(Number(params.value ?? 0)) },
+        { field: 'total_bytes', headerName: 'Size', valueFormatter: (params) => formatBytes(Number(params.value ?? 0)) },
+        { field: 'read_ops', headerName: 'Reads', valueFormatter: (params) => formatNumber(Number(params.value ?? 0)) },
+        { field: 'seq_scan', headerName: 'Seq', valueFormatter: (params) => formatNumber(Number(params.value ?? 0)) },
+        { field: 'idx_scan', headerName: 'Idx', valueFormatter: (params) => formatNumber(Number(params.value ?? 0)) },
+      ]}
+    />
   )
 }
 
@@ -1193,6 +1560,13 @@ function LoadingTile() {
   return <div className="h-[86px] animate-pulse rounded-lg border border-slate-800 bg-slate-900/60" />
 }
 
+function bottleneckTone(severity: string) {
+  if (severity === 'high') return 'bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/30'
+  if (severity === 'medium') return 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/30'
+  if (severity === 'low') return 'bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-500/30'
+  return 'bg-slate-700 text-slate-300'
+}
+
 function useLiveSocket(mode: 'demo' | 'live', queryClient: ReturnType<typeof useQueryClient>) {
   const [connected, setConnected] = useState(false)
 
@@ -1254,39 +1628,145 @@ function buildWarehouseChart(data?: StatsOverview) {
   }
 }
 
-function buildOverviewPulseChart(points: number[]) {
-  const data = points.length ? points : [0]
+function buildWarehouseArchitectureChart(data?: WarehouseOverview) {
+  const nodes = data?.architecture.nodes ?? []
+  const edges = data?.architecture.edges ?? []
   return {
     backgroundColor: 'transparent',
-    title: { text: 'Ingestion pulse', left: 12, top: 8, textStyle: { color: '#e2e8f0', fontSize: 14, fontWeight: 600 } },
-    tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: data.map((_, index) => `T-${data.length - index}`), axisLabel: { color: '#64748b' }, boundaryGap: false },
-    yAxis: { type: 'value', axisLabel: { color: '#64748b' }, splitLine: { lineStyle: { color: '#1e293b' } } },
+    tooltip: {
+      trigger: 'item',
+      formatter: (params: { dataType?: string; data?: { id?: string; database?: string; engine?: string; host?: string; label?: string; source?: string; target?: string; size_bytes?: number; row_count?: number } }) => {
+        if (params.dataType === 'edge') return `${params.data?.source} → ${params.data?.target}<br/>${params.data?.label ?? ''}`
+        return `${params.data?.id}<br/>${params.data?.engine ?? ''} ${params.data?.database ?? ''}<br/>${params.data?.host ?? ''}<br/>${formatBytes(params.data?.size_bytes)} • ${formatNumber(params.data?.row_count)} rows`
+      },
+    },
     series: [
       {
-        name: 'Events',
-        type: 'line',
-        smooth: true,
-        showSymbol: false,
-        data,
-        lineStyle: { width: 3, color: '#22d3ee' },
-        areaStyle: {
-          color: {
-            type: 'linear',
-            x: 0,
-            y: 0,
-            x2: 0,
-            y2: 1,
-            colorStops: [
-              { offset: 0, color: 'rgba(34,211,238,0.45)' },
-              { offset: 1, color: 'rgba(34,211,238,0.05)' },
-            ],
+        type: 'graph',
+        layout: 'force',
+        roam: false,
+        draggable: true,
+        force: { repulsion: 360, edgeLength: 130 },
+        label: { show: true, color: '#e2e8f0', fontSize: 11 },
+        lineStyle: { color: '#475569', width: 1.5, curveness: 0.18 },
+        edgeLabel: { show: false },
+        data: nodes.map((node) => ({
+          ...node,
+          name: node.id,
+          symbolSize: Math.max(36, Math.min(78, 32 + Math.log2((node.size_bytes ?? 1) + 1) * 3)),
+          itemStyle: {
+            color:
+              node.id === 'BETMAN Data'
+                ? '#22d3ee'
+                : node.id === 'BETMAN Core'
+                  ? '#818cf8'
+                  : node.id === 'BETMAN Heatmap'
+                    ? '#34d399'
+                    : node.kind === 'source'
+                      ? '#f59e0b'
+                      : '#94a3b8',
           },
-        },
+        })),
+        links: edges.map((edge) => ({ source: edge.source, target: edge.target, label: edge.label })),
       },
     ],
-    grid: { left: 44, right: 20, top: 48, bottom: 28 },
-    animationDuration: 600,
+  }
+}
+
+function buildWarehouseSystemSizeChart(data?: WarehouseOverview) {
+  const databases = data?.databases ?? []
+  return {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      formatter: (params: { name: string; value: number; data?: { row_count?: number; table_count?: number } }) =>
+        `${params.name}<br/>${formatBytes(params.value)}<br/>${formatNumber(params.data?.row_count)} rows • ${formatNumber(params.data?.table_count)} tables`,
+    },
+    series: [
+      {
+        type: 'treemap',
+        roam: false,
+        breadcrumb: { show: false },
+        label: { show: true, color: '#f8fafc', formatter: '{b}' },
+        upperLabel: { show: true, color: '#f8fafc' },
+        itemStyle: { borderColor: '#0f172a', borderWidth: 2, gapWidth: 2 },
+        levels: [
+          { itemStyle: { borderColor: '#0f172a', gapWidth: 2 } },
+          { colorSaturation: [0.35, 0.75], itemStyle: { gapWidth: 1 } },
+        ],
+        data: databases.map((database) => ({
+          name: database.system,
+          value: Math.max(database.total_size_bytes, 1),
+          row_count: database.row_count,
+          table_count: database.table_count,
+          itemStyle: {
+            color:
+              database.system === 'BETMAN Data'
+                ? '#0891b2'
+                : database.system === 'BETMAN Core'
+                  ? '#4f46e5'
+                  : database.system === 'BETMAN Heatmap'
+                    ? '#059669'
+                    : '#475569',
+          },
+        })),
+      },
+    ],
+  }
+}
+
+function buildRacingCoverageChart(data?: RacingPulseResponse | null) {
+  const rows = data?.coverage ?? []
+  return {
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis' },
+    legend: { textStyle: { color: '#cbd5e1' } },
+    grid: { left: 42, right: 22, top: 42, bottom: 34 },
+    xAxis: {
+      type: 'category',
+      data: rows.map((row) => row.date?.slice(5) ?? row.date),
+      axisLabel: { color: '#94a3b8' },
+      axisLine: { lineStyle: { color: '#334155' } },
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: 'Runners',
+        axisLabel: { color: '#94a3b8' },
+        splitLine: { lineStyle: { color: '#1e293b' } },
+      },
+      {
+        type: 'value',
+        name: 'Races',
+        axisLabel: { color: '#94a3b8' },
+        splitLine: { show: false },
+      },
+    ],
+    series: [
+      {
+        name: 'Runners',
+        type: 'bar',
+        data: rows.map((row) => row.runners),
+        itemStyle: { color: '#22d3ee' },
+      },
+      {
+        name: 'Jockeys',
+        type: 'line',
+        smooth: true,
+        data: rows.map((row) => row.jockeys),
+        itemStyle: { color: '#a78bfa' },
+        lineStyle: { width: 3 },
+      },
+      {
+        name: 'Races',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        data: rows.map((row) => row.races),
+        itemStyle: { color: '#34d399' },
+        lineStyle: { width: 3 },
+      },
+    ],
   }
 }
 

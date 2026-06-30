@@ -1,5 +1,6 @@
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/v1'
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 const API_BEARER_TOKEN = import.meta.env.VITE_API_BEARER_TOKEN
+const DATA_TOKEN_KEY = 'betman_data_token'
 
 export const POLLING_INTERVALS = {
   stats: 15000,
@@ -16,6 +17,66 @@ export interface StatsOverview {
   freshness: Record<string, string | null>
   ingestion_last_24h: Record<string, number>
   tables: Array<{ table_name: string; approx_rows: number; total_bytes: number; table_bytes: number; index_bytes: number }>
+}
+
+export interface WarehouseTable {
+  database: string
+  system: string
+  schema_name: string
+  table_name: string
+  approx_rows: number
+  dead_rows: number
+  total_bytes: number
+  table_bytes: number
+  index_bytes: number
+  seq_scan: number
+  idx_scan: number
+  read_ops: number
+  disk_reads: number
+  cache_hits: number
+  writes: number
+  flags?: string[]
+}
+
+export interface WarehouseDatabase {
+  name: string
+  system: string
+  engine: string
+  host: string
+  location: string
+  role: string
+  source: string
+  total_size_bytes: number
+  table_count: number
+  row_count: number
+  tables: WarehouseTable[]
+  hot_tables: WarehouseTable[]
+  large_tables: WarehouseTable[]
+}
+
+export interface WarehouseBottleneck {
+  severity: 'high' | 'medium' | 'low' | 'info'
+  system: string
+  database: string
+  table_name: string
+  message: string
+  flags: string[]
+  read_ops: number
+  total_bytes: number
+  approx_rows: number
+}
+
+export interface WarehouseOverview {
+  generated_at: string
+  sources: { live: string[]; snapshot: string[]; snapshot_generated_at: string | null }
+  databases: WarehouseDatabase[]
+  large_tables: WarehouseTable[]
+  hot_tables: WarehouseTable[]
+  bottlenecks: WarehouseBottleneck[]
+  architecture: {
+    nodes: Array<{ id: string; database?: string; engine?: string; host?: string; kind?: string; size_bytes?: number; table_count?: number; row_count?: number }>
+    edges: Array<{ source: string; target: string; label: string }>
+  }
 }
 
 export interface HealthResponse {
@@ -90,6 +151,37 @@ export interface PeopleResponse {
   role: string
   filters: Record<string, string | number | null>
   items: Array<{ person: string; split_value: string | null; runners: number; wins: number; places: number; win_rate: number; place_rate: number; roi: number | null }>
+}
+
+export interface RacingPulseResponse {
+  filters: { date_from: string | null; date_to: string | null }
+  totals: {
+    meetings: number
+    races: number
+    runners: number
+    jockeys: number
+    trainers: number
+    tracks: number
+    resulted_runners: number
+    scratched_runners: number
+    first_meeting_date: string | null
+    latest_meeting_date: string | null
+  }
+  coverage: Array<{ date: string; meetings: number; races: number; runners: number; jockeys: number; trainers: number; tracks: number; avg_field_size: number | null }>
+  top_jockeys: PeopleResponse['items']
+  top_trainers: PeopleResponse['items']
+  track_activity: Array<{ track_name: string; jurisdiction: string; surface: string; meetings: number; races: number; runners: number; jockeys: number; trainers: number; avg_field_size: number | null }>
+  race_class_activity: Array<{ race_class: string; races: number; runners: number; avg_field_size: number | null }>
+  market: {
+    priced_runners: number
+    avg_closing_price: number | null
+    min_closing_price: number | null
+    max_closing_price: number | null
+    latest_price_at: string | null
+    favourite_races: number
+    favourite_wins: number
+    favourite_win_rate: number | null
+  }
 }
 
 export interface AssistantResponse {
@@ -180,10 +272,23 @@ interface HeatmapQueryOptions {
 
 interface PeopleQueryOptions {
   track?: string
+  date_from?: string
+  date_to?: string
+  surface?: string
+  condition_category?: string
+  distance_min?: number
+  distance_max?: number
+  race_class_group?: string
   limit?: number
   min_runners?: number
   order_by?: string
   group_by?: string
+}
+
+interface RacingPulseQueryOptions {
+  date_from?: string
+  date_to?: string
+  limit?: number
 }
 
 function withQuery(path: string, query: Record<string, string | number | null | undefined>) {
@@ -199,6 +304,10 @@ function withQuery(path: string, query: Record<string, string | number | null | 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   headers.set('Content-Type', 'application/json')
+  const dataToken = getDataToken()
+  if (dataToken) {
+    headers.set('Authorization', 'Bearer ' + dataToken)
+  }
   if (API_BEARER_TOKEN) {
     headers.set('Authorization', 'Bearer ' + API_BEARER_TOKEN)
   }
@@ -211,10 +320,42 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
+export function getDataToken() {
+  try {
+    return localStorage.getItem(DATA_TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function setDataToken(token: string) {
+  localStorage.setItem(DATA_TOKEN_KEY, token)
+}
+
+export function clearDataToken() {
+  localStorage.removeItem(DATA_TOKEN_KEY)
+}
+
+export async function loginWithData(username: string, password: string) {
+  const response = await fetch('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  if (!response.ok) {
+    throw new Error('Invalid username or password')
+  }
+  return (await response.json()) as { access_token: string; token_type: string }
+}
+
 export function buildLiveWebSocketUrl(feedId: string | number) {
   const baseUrl = new URL(API_BASE_URL, window.location.origin)
   baseUrl.protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
   baseUrl.pathname = `${baseUrl.pathname.replace(/\/$/, '')}/live/${feedId}`
+  const dataToken = getDataToken()
+  if (dataToken) {
+    baseUrl.searchParams.set('data_token', dataToken)
+  }
   if (API_BEARER_TOKEN) {
     baseUrl.searchParams.set('api_key', API_BEARER_TOKEN)
   }
@@ -224,6 +365,7 @@ export function buildLiveWebSocketUrl(feedId: string | number) {
 export const api = {
   getHealth: () => request<HealthResponse>('/health'),
   getStatsOverview: () => request<StatsOverview>('/stats/overview'),
+  getWarehouseOverview: () => request<WarehouseOverview>('/stats/warehouse'),
   getMeetings: (date?: string) => request<MeetingsResponse>(`/meetings${date ? `?date=${date}` : ''}`),
   getRaces: (options: RaceQueryOptions = {}) =>
     request<RaceListResponse>(
@@ -269,6 +411,13 @@ export const api = {
     request<PeopleResponse>(
       withQuery('/analytics/trainer-win-rates', {
         track: options.track,
+        date_from: options.date_from,
+        date_to: options.date_to,
+        surface: options.surface,
+        condition_category: options.condition_category,
+        distance_min: options.distance_min,
+        distance_max: options.distance_max,
+        race_class_group: options.race_class_group,
         limit: options.limit,
         min_runners: options.min_runners,
         order_by: options.order_by,
@@ -279,10 +428,25 @@ export const api = {
     request<PeopleResponse>(
       withQuery('/analytics/jockey-win-rates', {
         track: options.track,
+        date_from: options.date_from,
+        date_to: options.date_to,
+        surface: options.surface,
+        condition_category: options.condition_category,
+        distance_min: options.distance_min,
+        distance_max: options.distance_max,
+        race_class_group: options.race_class_group,
         limit: options.limit,
         min_runners: options.min_runners,
         order_by: options.order_by,
         group_by: options.group_by,
+      }),
+    ),
+  getRacingPulse: (options: RacingPulseQueryOptions = {}) =>
+    request<RacingPulseResponse>(
+      withQuery('/analytics/racing-pulse', {
+        date_from: options.date_from,
+        date_to: options.date_to,
+        limit: options.limit,
       }),
     ),
   askBetman: (question: string) => request<AssistantResponse>('/assistant/query', { method: 'POST', body: JSON.stringify({ question }) }),

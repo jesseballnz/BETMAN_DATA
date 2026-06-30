@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date as date_type
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -10,6 +11,16 @@ from pydantic import BaseModel
 from app.db import fetch_all, fetch_row
 
 router = APIRouter(prefix="/races", tags=["races"])
+MAX_ODDS_SNAPSHOTS_PER_ENTRY = 320
+
+
+def _parse_date_param(value: str | None) -> date_type | None:
+    if value is None:
+        return None
+    try:
+        return date_type.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD") from exc
 
 
 class ReplayFrameType(StrEnum):
@@ -166,7 +177,7 @@ def _build_race_filters(
     params: list[Any] = []
 
     for value, clause in (
-        (date, "m.meeting_date = ${idx}"),
+        (_parse_date_param(date), "m.meeting_date = ${idx}"),
         (track, "LOWER(m.track_name) = LOWER(${idx})"),
         (race_class, "r.race_class_code = ${idx}"),
         (race_class_group, "r.race_class_group = ${idx}"),
@@ -722,7 +733,28 @@ def _group_odds_rows(rows: list[dict[str, Any]], anchor: datetime | None) -> lis
                     "source": row["source"],
                 }
             )
+    for entry in grouped.values():
+        entry["snapshots"] = _sample_time_series(entry["snapshots"], MAX_ODDS_SNAPSHOTS_PER_ENTRY)
     return list(grouped.values())
+
+
+def _sample_time_series(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    if len(items) <= limit:
+        return items
+    if limit <= 2:
+        return [items[0], items[-1]][:limit]
+    step = (len(items) - 1) / (limit - 1)
+    sampled: list[dict[str, Any]] = []
+    last_index = -1
+    for i in range(limit):
+        index = round(i * step)
+        if index <= last_index:
+            index = last_index + 1
+        if index >= len(items):
+            index = len(items) - 1
+        sampled.append(items[index])
+        last_index = index
+    return sampled
 
 
 def _coerce_movement(row: dict[str, Any]) -> dict[str, Any]:

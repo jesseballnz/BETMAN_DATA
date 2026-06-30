@@ -5,6 +5,9 @@ tote pools, and odds compression signals.
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
@@ -51,6 +54,20 @@ class TotePoolItem(BaseModel):
     captured_at: str
 
 
+def _as_dict(value: Any) -> dict | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return decoded if isinstance(decoded, dict) else None
+    return None
+
+
 @router.get("/signals", response_model=list[MarketSignalItem])
 async def get_market_signals(
     request: Request,
@@ -88,7 +105,7 @@ async def get_market_signals(
         """,
         *params,
     )
-    return [MarketSignalItem(**row) for row in rows]
+    return [MarketSignalItem(**{**row, "evidence": _as_dict(row.get("evidence"))}) for row in rows]
 
 
 @router.get("/steamers", response_model=list[MarketSignalItem])
@@ -122,7 +139,7 @@ async def get_steamers(
         race_date,
         limit,
     )
-    return [MarketSignalItem(**row) for row in rows]
+    return [MarketSignalItem(**{**row, "evidence": _as_dict(row.get("evidence"))}) for row in rows]
 
 
 @router.get("/drifters", response_model=list[MarketSignalItem])
@@ -156,7 +173,7 @@ async def get_drifters(
         race_date,
         limit,
     )
-    return [MarketSignalItem(**row) for row in rows]
+    return [MarketSignalItem(**{**row, "evidence": _as_dict(row.get("evidence"))}) for row in rows]
 
 
 @router.get("/smart-money", response_model=list[SmartMoneyItem])

@@ -124,15 +124,19 @@ async def get_barrier_analysis(
     track_name: str,
     condition: str | None = None,
     condition_category: str | None = None,
-    surface: str = "turf",
+    surface: str = "all",
     distance_min: int | None = None,
     distance_max: int | None = None,
     race_class_group: str | None = None,
     field_size_min: int | None = None,
     since: str | None = None,
 ):
-    clauses = ["LOWER(track_name) = LOWER($1)", "surface = $2"]
-    params: list[Any] = [track_name, surface]
+    clauses = ["LOWER(track_name) = LOWER($1)"]
+    params: list[Any] = [track_name]
+
+    if surface != "all":
+        params.append(surface)
+        clauses.append(f"LOWER(surface) = LOWER(${len(params)})")
 
     if condition is not None:
         params.append(condition)
@@ -213,11 +217,15 @@ async def get_heatmap(
     request: Request,
     track_name: str,
     condition_category: str | None = None,
-    surface: str = "turf",
+    surface: str = "all",
     distance_band: str | None = None,
 ):
-    clauses = ["LOWER(track_name) = LOWER($1)", "surface = $2"]
-    params: list[Any] = [track_name, surface]
+    clauses = ["LOWER(track_name) = LOWER($1)"]
+    params: list[Any] = [track_name]
+
+    if surface != "all":
+        params.append(surface)
+        clauses.append(f"LOWER(surface) = LOWER(${len(params)})")
     if condition_category is not None:
         params.append(condition_category)
         clauses.append(f"condition_category = ${len(params)}")

@@ -5,6 +5,8 @@ pre-race intelligence packages, and discovery pattern signals.
 
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
@@ -191,7 +193,7 @@ async def get_horse_score_history(
 @router.get("/scores/leaderboard", response_model=list[HorseScores])
 async def get_score_leaderboard(
     request: Request,
-    race_date: str | None = Query(default=None, description="YYYY-MM-DD"),
+    race_date: date | None = Query(default=None, description="YYYY-MM-DD"),
     min_alpha: float = Query(default=70.0, description="Minimum alpha score"),
     limit: int = Query(default=20, le=100),
 ):
@@ -209,7 +211,11 @@ async def get_score_leaderboard(
         JOIN meetings m ON m.id = r.meeting_id
         JOIN runners run ON run.id = hs.runner_id
         WHERE hs.alpha_score >= $1
-          AND ($2::date IS NULL OR m.meeting_date = $2::date)
+          AND (
+            $2::date IS NULL
+            OR m.meeting_date = $2::date
+            OR hs.calculated_at::date = $2::date
+          )
         ORDER BY hs.alpha_score DESC, hs.calculated_at DESC
         LIMIT $3
         """,
@@ -228,34 +234,30 @@ async def get_signal_performance(
     rows = await fetch_all(
         request,
         """
-        WITH latest_prices AS (
-            SELECT DISTINCT ON (race_entry_id)
-                race_entry_id,
-                COALESCE(win_sp, win_price)::float AS closing_price
-            FROM odds_snapshots
-            WHERE COALESCE(win_sp, win_price) IS NOT NULL
-            ORDER BY race_entry_id, captured_at DESC
-        )
         SELECT ms.signal_type, $1::int AS period_days,
                COUNT(*)::int AS bets,
                COUNT(*) FILTER (WHERE re.final_position = 1)::int AS winners,
-               ROUND(AVG(CASE
+               ROUND((AVG(CASE
                     WHEN lp.closing_price IS NULL THEN NULL
                     WHEN re.final_position = 1 THEN lp.closing_price - 1
                     ELSE -1
-               END) * 100, 2)::float AS roi,
+               END) * 100)::numeric, 2)::float AS roi,
                ROUND(
                   COUNT(*) FILTER (WHERE re.final_position = 1)::numeric
                   * 100.0 / NULLIF(COUNT(*), 0),
                   2
                )::float AS strike_rate,
-               ROUND(
-                  (AVG(CASE WHEN re.final_position = 1 THEN 1.0 ELSE 0.0 END) - 0.1) * 100,
-                  2
-               )::float AS edge
+               ROUND(((AVG(CASE WHEN re.final_position = 1 THEN 1.0 ELSE 0.0 END) - 0.1) * 100)::numeric, 2)::float AS edge
         FROM market_signals ms
         JOIN race_entries re ON re.id = ms.race_entry_id
-        LEFT JOIN latest_prices lp ON lp.race_entry_id = re.id
+        LEFT JOIN LATERAL (
+            SELECT COALESCE(os.win_sp, os.win_price)::float AS closing_price
+            FROM odds_snapshots os
+            WHERE os.race_entry_id = re.id
+              AND COALESCE(os.win_sp, os.win_price) IS NOT NULL
+            ORDER BY os.captured_at DESC
+            LIMIT 1
+        ) lp ON TRUE
         WHERE ms.detected_at >= NOW() - make_interval(days => $1)
         GROUP BY ms.signal_type
         ORDER BY roi DESC NULLS LAST, strike_rate DESC

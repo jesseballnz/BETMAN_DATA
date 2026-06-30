@@ -1,0 +1,121 @@
+{
+  "generated_at": "2026-06-26T04:50:00+12:00",
+  "sources": [
+    "betman-sporter-syd1:/opt/betman core PostgreSQL and SQLite inventory",
+    "betman-heatmap-syd1:/opt/betman/heatmap/backend/heatmap.db"
+  ],
+  "databases": [
+    {
+      "name": "betman",
+      "system": "BETMAN Core",
+      "engine": "PostgreSQL",
+      "host": "betman-sporter-syd1",
+      "location": "127.0.0.1:5432",
+      "role": "core",
+      "source": "snapshot_pg_stat",
+      "total_size_bytes": 38517783,
+      "tables": [
+        {
+          "schema_name": "public",
+          "table_name": "betman_audit",
+          "approx_rows": 6628,
+          "total_bytes": 22069248,
+          "table_bytes": 0,
+          "index_bytes": 0,
+          "seq_scan": 1,
+          "idx_scan": 5190,
+          "read_ops": 5191,
+          "dead_rows": 0
+        },
+        {
+          "schema_name": "public",
+          "table_name": "betman_data",
+          "approx_rows": 32,
+          "total_bytes": 8650752,
+          "table_bytes": 0,
+          "index_bytes": 0,
+          "seq_scan": 1,
+          "idx_scan": 139860,
+          "read_ops": 139861,
+          "dead_rows": 48
+        },
+        {
+          "schema_name": "public",
+          "table_name": "betman_auth_state",
+          "approx_rows": 1,
+          "total_bytes": 49152,
+          "table_bytes": 0,
+          "index_bytes": 0,
+          "seq_scan": 1,
+          "idx_scan": 45,
+          "read_ops": 46,
+          "dead_rows": 1
+        }
+      ]
+    },
+    {
+      "name": "heatmap.db",
+      "system": "BETMAN Heatmap",
+      "engine": "SQLite",
+      "host": "betman-heatmap-syd1",
+      "location": "/opt/betman/heatmap/backend/heatmap.db",
+      "role": "product",
+      "source": "snapshot_sqlite",
+      "total_size_bytes": 1662976,
+      "tables": [
+        { "table_name": "alembic_version", "approx_rows": 1, "total_bytes": 0 },
+        { "table_name": "cameras", "approx_rows": 4, "total_bytes": 0 },
+        { "table_name": "heatmap_image_metadata", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "heatmap_race_metadata", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "heatmap_sensor_baseline_samples", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "heatmap_sensor_baseline_sessions", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "horse_images", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "horse_media", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "meetings", "approx_rows": 42, "total_bytes": 0 },
+        { "table_name": "odds_snapshot", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "races", "approx_rows": 182, "total_bytes": 0 },
+        { "table_name": "system_config", "approx_rows": 6, "total_bytes": 0 },
+        { "table_name": "track_templates", "approx_rows": 0, "total_bytes": 0 }
+      ]
+    },
+    {
+      "name": "lineforge.db",
+      "system": "LineForge",
+      "engine": "SQLite",
+      "host": "betman-sporter-syd1",
+      "location": "/opt/betman/lineforge/lineforge.db",
+      "role": "pedigree",
+      "source": "snapshot_sqlite",
+      "total_size_bytes": 299008,
+      "tables": [
+        { "table_name": "dam_affinity_stats", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "dam_family_relatives", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "dam_produce_records", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "dam_sectional_metrics", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "dams", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "horses", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "race_results", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "sire_photos", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "sires", "approx_rows": 0, "total_bytes": 0 }
+      ]
+    },
+    {
+      "name": "wifi_densepose_fallback.db",
+      "system": "RuView",
+      "engine": "SQLite",
+      "host": "betman-sporter-syd1",
+      "location": "/opt/betman/ruview/v1/data/wifi_densepose_fallback.db",
+      "role": "sensor",
+      "source": "snapshot_sqlite",
+      "total_size_bytes": 192512,
+      "tables": [
+        { "table_name": "audit_logs", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "csi_data", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "devices", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "pose_detections", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "sessions", "approx_rows": 0, "total_bytes": 0 },
+        { "table_name": "system_metrics", "approx_rows": 0, "total_bytes": 0 }
+      ]
+    }
+  ]
+}

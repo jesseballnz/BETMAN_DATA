@@ -1,0 +1,19 @@
+[Unit]
+Description=BETMAN Data TAB thoroughbred poller
+After=network-online.target postgresql.service betman-data-api.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/betman/betman_data
+Environment=BETMAN_DATA_ROOT=/opt/betman/betman_data
+Environment=BETMAN_DATA_ENV_FILE=/etc/betman/betman-data.env
+Environment=BETMAN_DATA_TIMEZONE=Pacific/Auckland
+ExecStart=/opt/betman/betman_data/scripts/poll_tab_events.sh
+User=root
+Group=root
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+StandardOutput=append:/var/log/betman/betman-data-tab-poller.out.log
+StandardError=append:/var/log/betman/betman-data-tab-poller.err.log

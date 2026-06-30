@@ -1,14 +1,41 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request
+import json
+from datetime import date as date_type
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.db import fetch_all
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
 
+def _parse_date_param(value: str | None) -> date_type | None:
+    if value is None:
+        return None
+    try:
+        return date_type.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD") from exc
+
+
+def _coerce_races(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(decoded, list):
+            return [item for item in decoded if isinstance(item, dict)]
+    return []
+
+
 @router.get("")
 async def list_meetings(request: Request, date: str | None = Query(None, description="YYYY-MM-DD")):
+    meeting_date = _parse_date_param(date)
     rows = await fetch_all(
         request,
         """
@@ -41,6 +68,8 @@ async def list_meetings(request: Request, date: str | None = Query(None, descrip
         GROUP BY m.id, m.track_name, m.meeting_date, m.surface, m.jurisdiction, m.status
         ORDER BY m.track_name, m.id
         """,
-        date,
+        meeting_date,
     )
+    for row in rows:
+        row["races"] = _coerce_races(row.get("races"))
     return {"date": date, "meetings": rows}

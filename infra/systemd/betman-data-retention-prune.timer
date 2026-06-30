@@ -1,0 +1,11 @@
+[Unit]
+Description=Run BETMAN Data high-frequency retention prune hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=10m
+Persistent=true
+Unit=betman-data-retention-prune.service
+
+[Install]
+WantedBy=timers.target

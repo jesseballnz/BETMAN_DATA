@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     # PostgreSQL
     database_url: str = "******localhost:5432/betman"
+    warehouse_snapshot_path: str = str(ROOT_DIR / "config" / "warehouse_sources.json")
 
     # Redis (pub/sub for WebSocket live stream)
     redis_url: str = "redis://localhost:6379/0"
