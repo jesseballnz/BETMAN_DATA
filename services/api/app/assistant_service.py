@@ -188,6 +188,7 @@ TABLE_ALIASES = {
 TEXT_SEARCH_TABLES = {
     "discovered_patterns": ("description", "pattern_type"),
     "ocr_observations": ("detected_text", "normalized_text", "observation_type"),
+    "pedigrees": ("sire", "dam", "damsire", "family_line", "provider_name"),
     "race_summaries": ("summary_text", "winner_name", "margin_description"),
     "race_timeline_events": ("event_type", "source_type"),
     "races": ("name", "race_class_code", "race_class_group", "conditions_description"),
@@ -366,13 +367,14 @@ def validate_safe_select(sql: str) -> None:
         if re.search(rf"\b{keyword}\b", upper_sql):
             raise ValueError(f"Blocked keyword detected: {keyword}")
 
+    cte_names = _extract_cte_names(upper_sql)
     tables = [
         table
         for table in (
             match.split(".")[-1].lower()
             for match in re.findall(r"\b(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_\.]*)", upper_sql)
         )
-        if table.upper() not in TABLE_EXPRESSION_KEYWORDS
+        if table.upper() not in TABLE_EXPRESSION_KEYWORDS and table not in cte_names
     ]
     disallowed = [table for table in tables if table not in ALLOWED_TABLES]
     if disallowed:
@@ -402,6 +404,12 @@ def build_rule_based_plan(question: str) -> AssistantPlan | None:
     condition = _extract_condition(lowered)
     search_term = _extract_search_term(question)
     table = _extract_table_reference(lowered)
+
+    if _is_market_mover_question(lowered):
+        return _build_market_mover_plan(question, days, today_only=_mentions_today(lowered))
+
+    if table and table.endswith("_daily_summary"):
+        return _build_table_scan_plan(question, table, search_term)
 
     if _is_odds_question(lowered):
         runner_name = _extract_runner_context(question) or search_term
@@ -487,10 +495,10 @@ def build_rule_based_plan(question: str) -> AssistantPlan | None:
             chart={"type": "table"},
         )
 
-    if any(term in lowered for term in ("pedigree", "sire", "dam", "damsire", "bloodline", "bloodlines")):
-        term = search_term or _strip_intent_words(
+    if any(term in lowered for term in ("pedigree", "progeny", "sire", "dam", "damsire", "bloodline", "bloodlines")):
+        term = _extract_pedigree_term(question) or search_term or _strip_intent_words(
             question,
-            ("show", "find", "search", "pedigree", "sire", "dam", "damsire", "bloodline", "bloodlines", "for"),
+            ("show", "find", "search", "pedigree", "progeny", "sire", "dam", "damsire", "bloodline", "bloodlines", "for"),
         )
         if any(term in lowered for term in ("top sire", "best sire", "wet sire", "bloodline performance", "bloodlines")):
             sql = (
@@ -559,14 +567,11 @@ def build_rule_based_plan(question: str) -> AssistantPlan | None:
             chart={"type": "table"},
         )
 
-    if any(term in lowered for term in ("horse score", "horse scores", "alpha score", "betman probability", "value score")):
+    if _is_value_or_alpha_question(lowered):
         return _build_value_runner_plan(question, days, today_only=_mentions_today(lowered))
 
-    if "value runner" in lowered or "value runners" in lowered or "top value" in lowered:
-        return _build_value_runner_plan(question, days, today_only=_mentions_today(lowered))
-
-    if table and table.endswith("_daily_summary"):
-        return _build_table_scan_plan(question, table, search_term)
+    if _is_today_race_card_question(lowered):
+        return _build_race_card_plan(question, today_only=True)
 
     if "trainer" in lowered and any(term in lowered for term in ("over-performing", "overperforming", "over performing", "market")):
         sql = (
@@ -636,7 +641,7 @@ def build_rule_based_plan(question: str) -> AssistantPlan | None:
             chart={"type": "bar", "x": "trainer", "y": "confidence"},
         )
 
-    if any(term in lowered for term in ("weather", "rain", "wind", "humidity", "temperature")):
+    if _has_weather_intent(lowered):
         sql = (
             "SELECT ws.track_name, wr.recorded_at, wr.temperature_c, wr.humidity_pct, "
             "wr.wind_speed_kmh, wr.wind_gust_kmh, wr.wind_direction_deg, wr.rainfall_mm, "
@@ -890,8 +895,61 @@ def _mentions_today(question: str) -> bool:
     return "today" in question or "today's" in question or "todays" in question
 
 
+def _extract_cte_names(upper_sql: str) -> set[str]:
+    if not upper_sql.startswith("WITH "):
+        return set()
+    return {
+        match.group(1).lower()
+        for match in re.finditer(r"(?:WITH|,)\s+([A-Z_][A-Z0-9_]*)\s+AS\s*\(", upper_sql)
+    }
+
+
+def _is_value_or_alpha_question(question: str) -> bool:
+    return any(
+        term in question
+        for term in (
+            "horse score",
+            "horse scores",
+            "alpha score",
+            "alpha runners",
+            "top alpha",
+            "top-scored",
+            "top scored",
+            "leaderboard",
+            "betman probability",
+            "betman edge",
+            "probability edge",
+            "biggest edge",
+            "market-implied",
+            "market implied",
+            "value score",
+            "value runner",
+            "value runners",
+            "top value",
+        )
+    )
+
+
+def _is_market_mover_question(question: str) -> bool:
+    return any(term in question for term in ("market mover", "market movers", "biggest movers", "price movers"))
+
+
+def _is_today_race_card_question(question: str) -> bool:
+    if not _mentions_today(question):
+        return False
+    return any(term in question for term in ("race", "races", "card", "meeting", "meetings"))
+
+
+def _has_weather_intent(question: str) -> bool:
+    return bool(re.search(r"\b(weather|rain|wind|humidity|temperature)\b", question))
+
+
 def _build_value_runner_plan(question: str, days: int, *, today_only: bool = False) -> AssistantPlan:
-    date_clause = "m.meeting_date = CURRENT_DATE" if today_only else "m.meeting_date >= CURRENT_DATE - $1::int"
+    date_clause = (
+        "(m.meeting_date = CURRENT_DATE OR hs.calculated_at::date = CURRENT_DATE)"
+        if today_only
+        else "m.meeting_date >= CURRENT_DATE - $1::int"
+    )
     sql = (
         "SELECT m.track_name, m.meeting_date, r.race_number, run.name AS runner_name, "
         "hs.alpha_score, hs.value_score, hs.betman_probability, hs.implied_probability, "
@@ -911,6 +969,48 @@ def _build_value_runner_plan(question: str, days: int, *, today_only: bool = Fal
         summary="Top value runners ranked by BETMAN value score and probability edge.",
         confidence=0.86,
         chart={"type": "bar", "x": "runner_name", "y": "value_score"},
+    )
+
+
+def _build_market_mover_plan(question: str, days: int, *, today_only: bool = False) -> AssistantPlan:
+    date_clause = "m.meeting_date = CURRENT_DATE" if today_only else "m.meeting_date >= CURRENT_DATE - $1::int"
+    sql = (
+        "SELECT m.track_name, m.meeting_date, r.race_number, run.name AS runner_name, "
+        "ms.signal_type, ms.magnitude, ms.detected_at, ms.time_to_jump_s "
+        "FROM market_signals ms "
+        "JOIN races r ON r.id = ms.race_id "
+        "JOIN meetings m ON m.id = r.meeting_id "
+        "LEFT JOIN race_entries re ON re.id = ms.race_entry_id "
+        "LEFT JOIN runners run ON run.id = re.runner_id "
+        f"WHERE {date_clause} "
+        "ORDER BY ABS(ms.magnitude) DESC NULLS LAST, ms.detected_at DESC LIMIT 50"
+    )
+    return AssistantPlan(
+        question=question,
+        sql=sql,
+        params=[] if today_only else [days],
+        summary="Market movers ranked by absolute move magnitude.",
+        confidence=0.82,
+        chart={"type": "bar", "x": "runner_name", "y": "magnitude"},
+    )
+
+
+def _build_race_card_plan(question: str, *, today_only: bool = False) -> AssistantPlan:
+    date_clause = "m.meeting_date = CURRENT_DATE" if today_only else "m.meeting_date >= CURRENT_DATE - $1::int"
+    sql = (
+        "SELECT m.track_name, m.meeting_date, r.race_number, r.name, r.status, "
+        "r.distance_m, r.race_class_group, r.scheduled_start_time "
+        "FROM races r JOIN meetings m ON m.id = r.meeting_id "
+        f"WHERE {date_clause} "
+        "ORDER BY m.meeting_date DESC, m.track_name, r.race_number LIMIT 50"
+    )
+    return AssistantPlan(
+        question=question,
+        sql=sql,
+        params=[] if today_only else [180],
+        summary="Race card matching the requested date context.",
+        confidence=0.76,
+        chart={"type": "table"},
     )
 
 
@@ -953,6 +1053,15 @@ def _extract_search_term(question: str) -> str:
     for marker in (" for ", " about ", " containing ", " contains ", " mentioning ", " mentions ", " named ", " called "):
         if marker in lowered:
             return question[lowered.rfind(marker) + len(marker):].strip(" ?.")
+    leading = re.match(r"\s*(?:search|find|show|list)\s+(?:me\s+)?(.{2,80})", question, flags=re.IGNORECASE)
+    if leading:
+        term = re.sub(
+            r"\b(?:for|about|the|a|an|horse|runner|runners|horses|progeny|pedigree|pedigrees|table|rows|recent|latest|all|today|today's|todays)\b",
+            "",
+            leading.group(1),
+            flags=re.IGNORECASE,
+        )
+        return " ".join(term.strip(" ?.").split())
     return ""
 
 
@@ -977,6 +1086,17 @@ def _strip_intent_words(question: str, words: tuple[str, ...]) -> str:
 def _clean_entity(value: str) -> str:
     value = re.split(r"\b(?:what|which|who|where|when|why|how|is|are|was|were|on|at|in|over|under)\b", value, maxsplit=1)[0]
     return " ".join(value.strip(" ,?.'\"").split())
+
+
+def _extract_pedigree_term(question: str) -> str:
+    match = re.search(
+        r"\b(?:find|show|search|list)\s+([A-Z][A-Za-z'\-]*(?:\s+[A-Z][A-Za-z'\-]*){0,3})\s+progeny\b",
+        question,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _clean_entity(match.group(1))
+    return ""
 
 
 def _build_table_scan_plan(question: str, table: str, search_term: str) -> AssistantPlan:

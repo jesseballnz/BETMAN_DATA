@@ -39,6 +39,13 @@ def test_rule_based_plan_with_lateral_join_is_safe():
     assert "JOIN LATERAL" in plan.sql
 
 
+def test_validate_safe_select_allows_dynamic_cte_names():
+    validate_safe_select(
+        "WITH runner_prices AS (SELECT id FROM races LIMIT 10) "
+        "SELECT id FROM runner_prices LIMIT 10"
+    )
+
+
 @pytest.mark.parametrize(
     "sql",
     [
@@ -67,6 +74,7 @@ def test_validate_safe_select_allows_domain_tables(sql: str):
         "top horse scores last 30 days",
         "show smart money",
         "show weather at Ellerslie",
+        "find Savabeel progeny",
         "search transcripts for boxed on",
         "search ocr for dividend",
         "search for Te Akau",
@@ -107,9 +115,77 @@ def test_top_value_runners_uses_horse_scores_plan():
     assert plan is not None
     validate_safe_select(plan.sql)
     assert "horse_scores hs" in plan.sql
+    assert "hs.calculated_at::date = CURRENT_DATE" in plan.sql
     assert "value_score" in plan.sql
     assert plan.params == []
     assert plan.confidence > 0.8
+
+
+def test_betman_edge_routes_to_value_plan():
+    plan = build_rule_based_plan("which runners have the biggest BETMAN edge today")
+    assert plan is not None
+    validate_safe_select(plan.sql)
+    assert "horse_scores hs" in plan.sql
+    assert "probability_edge" in plan.sql
+    assert plan.params == []
+    assert plan.confidence > 0.8
+
+
+def test_top_alpha_runners_routes_to_horse_scores_plan():
+    plan = build_rule_based_plan("top alpha runners today")
+    assert plan is not None
+    validate_safe_select(plan.sql)
+    assert "horse_scores hs" in plan.sql
+    assert "alpha_score" in plan.sql
+    assert plan.params == []
+    assert plan.confidence > 0.8
+
+
+def test_market_movers_routes_to_market_signals_plan():
+    plan = build_rule_based_plan("show market movers today")
+    assert plan is not None
+    validate_safe_select(plan.sql)
+    assert "market_signals ms" in plan.sql
+    assert "ABS(ms.magnitude)" in plan.sql
+    assert plan.params == []
+    assert plan.confidence > 0.8
+
+
+def test_odds_summary_routes_to_summary_table():
+    plan = build_rule_based_plan("show odds summary")
+    assert plan is not None
+    validate_safe_select(plan.sql)
+    assert "odds_snapshot_daily_summary" in plan.sql
+    assert "odds_snapshots os" not in plan.sql
+    assert plan.params == []
+
+
+def test_today_races_uses_race_card_plan():
+    plan = build_rule_based_plan("show me races today")
+    assert plan is not None
+    validate_safe_select(plan.sql)
+    assert "JOIN meetings m" in plan.sql
+    assert "m.meeting_date = CURRENT_DATE" in plan.sql
+    assert plan.params == []
+    assert plan.confidence > 0.7
+
+
+def test_best_trainers_does_not_match_rain_inside_trainers():
+    plan = build_rule_based_plan("who are the best trainers at Belmont")
+    assert plan is not None
+    validate_safe_select(plan.sql)
+    assert "weather_readings" not in plan.sql
+    assert "re.trainer" in plan.sql
+    assert plan.params == [180, "Belmont"]
+
+
+def test_progeny_query_searches_pedigrees():
+    plan = build_rule_based_plan("find Savabeel progeny")
+    assert plan is not None
+    validate_safe_select(plan.sql)
+    assert "pedigrees p" in plan.sql
+    assert "p.sire" in plan.sql
+    assert plan.params == ["Savabeel"]
 
 
 def test_trainer_market_overperformance_uses_expected_wins_plan():
