@@ -20,6 +20,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_runners_external_runner_id
     WHERE external_runner_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_race_entries_race_runner
     ON race_entries (race_id, runner_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_smart_money_signal_natural
+    ON smart_money_indicators (race_id, race_entry_id, indicator_type, detected_at);
 
 CREATE TEMP TABLE tab_event_import_raw (line TEXT);
 \copy tab_event_import_raw(line) FROM '__TAB_EVENT_JSONL__' WITH (FORMAT csv, DELIMITER E'\x03', QUOTE E'\x01', ESCAPE E'\x02')
@@ -513,11 +515,36 @@ JOIN race_entries re ON re.race_id = r.id AND re.runner_id = run.id
 WHERE GREATEST(ranked.hold_pct, ranked.bet_pct) >= 5
 ON CONFLICT DO NOTHING;
 
+WITH recent_smart_signals AS (
+    SELECT DISTINCT ON (ms.race_id, ms.race_entry_id, ms.detected_at)
+        ms.race_id,
+        ms.race_entry_id,
+        'tab_money_tracker'::text AS indicator_type,
+        LEAST(0.95, 0.55 + ms.magnitude) AS confidence,
+        ms.detected_at
+    FROM market_signals ms
+    WHERE ms.signal_type = 'smart_money'
+      AND ms.detected_at >= current_date - interval '3 days'
+    ORDER BY ms.race_id, ms.race_entry_id, ms.detected_at, ms.magnitude DESC
+)
 INSERT INTO smart_money_indicators (race_id, race_entry_id, indicator_type, confidence, detected_at)
-SELECT race_id, race_entry_id, 'tab_money_tracker', LEAST(0.95, 0.55 + magnitude), detected_at
-FROM market_signals
-WHERE signal_type = 'smart_money'
-ON CONFLICT DO NOTHING;
+SELECT
+    s.race_id,
+    s.race_entry_id,
+    s.indicator_type,
+    s.confidence,
+    s.detected_at
+FROM recent_smart_signals s
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM smart_money_indicators existing
+    WHERE existing.race_id = s.race_id
+      AND existing.race_entry_id = s.race_entry_id
+      AND existing.indicator_type = s.indicator_type
+      AND existing.detected_at = s.detected_at
+)
+ON CONFLICT (race_id, race_entry_id, indicator_type, detected_at) DO UPDATE
+SET confidence = GREATEST(smart_money_indicators.confidence, EXCLUDED.confidence);
 
 WITH score_src AS (
     SELECT
