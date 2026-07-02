@@ -1,11 +1,25 @@
 # BETMAN_DATA — Internal API Specification
 
-This document describes the BETMAN_DATA internal API. The API is designed to be consumed directly by front-ends and internal tooling — every response is structured for immediate visual rendering without further transformation.
+This document describes the BETMAN_DATA internal API. It is designed for BETMAN
+front-ends, internal tooling, and future partner/OEM products. The public
+day-one app-builder API is the Core BETMAN API in the `BETMAN` repository;
+BETMAN_DATA is not currently exposed as an anonymous public developer endpoint.
 
-**Base URL:** `https://data-api.betman.internal/v1`  
-**Protocol:** HTTPS + WebSocket  
-**Format:** JSON (application/json)  
-**Auth:** ****** (API key per tenant, passed as `Authorization: ******
+**Internal production base URL:** `http://127.0.0.1:18086/v1`
+
+**Public production status:** served behind the Data Viewer gate on `:13002`, not
+as a direct third-party API surface.
+
+**Protocol:** HTTPS + WebSocket
+
+**Format:** JSON (application/json)
+
+**Auth:** tenant API key passed as `Authorization: Bearer <key>`
+
+The FastAPI docs and OpenAPI schema are available on the API service itself:
+
+- `GET /docs`
+- `GET /openapi.json`
 
 ---
 
@@ -74,6 +88,10 @@ Get a single feed with recent session info.
 ### `GET /stats/overview`
 
 Warehouse-level KPI payload for the Data Viewer overview tab.
+
+Production note: this endpoint performs heavier warehouse aggregation and can be
+slow on the current production dataset. Use `GET /stats/warehouse` for a fast
+warehouse health/storage snapshot when a lightweight check is enough.
 
 Returns:
 
@@ -766,7 +784,7 @@ Get active ad placements for a skin and slot.
 
 ## 8. Admin API
 
-> Admin endpoints require elevated privileges (`Authorization: ******  
+> Admin endpoints require elevated privileges (`Authorization: Bearer <admin-key>`).
 > All admin routes are prefixed `/admin/`.
 
 ### Tenants
@@ -872,7 +890,9 @@ Get active ad placements for a skin and slot.
 
 Subscribe to a real-time stream of race events as they are detected from the live feed.
 
-**Connection:** `wss://data-api.betman.internal/v1/live/1`
+**Connection:** `ws://127.0.0.1:18086/v1/live/1` on the internal production
+service binding, or the equivalent TLS/websocket URL when routed through a
+private gateway.
 
 Clients receive JSON messages as events are detected:
 

@@ -1,9 +1,13 @@
 # BETMAN Data API — Service
 
-The BETMAN Data API is the query interface for the entire BETMAN data platform.
-It exposes races, runners, signals, commentary replay, barrier analysis, weather intelligence,
-market signals, discovery patterns, proprietary BETMAN scores, and the skin engine for
-multi-tenant OEM licensing.
+The BETMAN Data API is the internal query interface for the BETMAN data platform.
+It exposes races, runners, signals, commentary replay, barrier analysis, weather
+intelligence, market signals, discovery patterns, proprietary BETMAN scores, and
+the skin engine for multi-tenant OEM licensing.
+
+The public day-one app-builder API lives in the Core BETMAN repository. This
+service is production-running behind BETMAN front-ends and internal tooling, but
+is not currently the anonymous public developer entry point.
 
 ## Tech Stack
 
@@ -65,6 +69,8 @@ The API will be available at `http://localhost:8000`.
 
 Interactive docs: `http://localhost:8000/docs`
 
+Production service binding: `http://127.0.0.1:18086`.
+
 ### With Docker
 
 ```bash
@@ -76,7 +82,7 @@ make docker-up
 All protected endpoints require an API key in the `Authorization` header:
 
 ```
-Authorization: ******
+Authorization: Bearer <api-key>
 ```
 
 Admin endpoints additionally require an admin-scoped key configured in `ADMIN_API_KEY`
@@ -89,6 +95,7 @@ For local development, set a test key in `.env` and use it in requests.
 | Endpoint | Description |
 |---|---|
 | `GET /v1/health` | Service health (no auth required) |
+| `GET /v1/ready` | Dependency readiness check (DB + Redis) |
 | `GET /v1/races` | List races (filter by date, class, track) |
 | `GET /v1/races/{id}/replay` | Commentary replay frames for a race |
 | `GET /v1/races/{id}/intelligence` | Full pre-race intelligence package |
@@ -98,6 +105,10 @@ For local development, set a test key in `.env` and use it in requests.
 | `GET /v1/tracks/{name}/barrier-analysis` | Gate Advantage Scores |
 | `GET /v1/skins/{tenant_slug}` | Tenant skin/brand resolution |
 | `GET /v1/search/transcripts` | Search commentary transcripts |
+
+`GET /v1/stats/warehouse` is the fast warehouse health/storage endpoint. The
+broader `GET /v1/stats/overview` endpoint performs heavier aggregation and
+should not be used as a lightweight production health check.
 
 See [docs/api-spec.md](../../docs/api-spec.md) for the complete endpoint reference.
 

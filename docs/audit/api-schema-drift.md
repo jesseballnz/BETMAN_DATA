@@ -6,6 +6,21 @@
 
 ---
 
+## Production Exposure Note
+
+As of the July production readiness sweep, the Data API is healthy privately on
+`127.0.0.1:18086` and is consumed by BETMAN front-ends/internal tooling. The
+public `:13002` surface is the Data Viewer gate/webapp, not the direct FastAPI
+developer surface. The MVP day-one public app-builder API is the Core BETMAN
+`/api/v1` API.
+
+Operational finding: `GET /v1/stats/warehouse` is fast and suitable for a
+lightweight warehouse status check. `GET /v1/stats/overview` performs heavier
+aggregation and has shown intermittent production timeouts on the current data
+volume, so it should not be treated as a readiness check until cached or tuned.
+
+---
+
 ## Classification Legend
 
 | Status | Meaning |
