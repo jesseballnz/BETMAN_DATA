@@ -9,6 +9,8 @@ WorkingDirectory=/opt/betman/betman_data
 Environment=BETMAN_DATA_ROOT=/opt/betman/betman_data
 Environment=BETMAN_DATA_ENV_FILE=/etc/betman/betman-data.env
 Environment=BETMAN_DATA_TIMEZONE=Pacific/Auckland
+Environment=BETMAN_DATA_DB=betman_data
+Environment=BETMAN_DATA_PSQL_USER=postgres
 ExecStart=/opt/betman/betman_data/scripts/poll_tab_events.sh
 User=root
 Group=root

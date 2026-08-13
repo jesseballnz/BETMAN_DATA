@@ -168,6 +168,8 @@ class BarrierContextResponse(BaseModel):
 def _build_race_filters(
     *,
     date: str | None,
+    date_from: str | None,
+    date_to: str | None,
     track: str | None,
     race_class: str | None,
     race_class_group: str | None,
@@ -178,6 +180,8 @@ def _build_race_filters(
 
     for value, clause in (
         (_parse_date_param(date), "m.meeting_date = ${idx}"),
+        (_parse_date_param(date_from), "m.meeting_date >= ${idx}"),
+        (_parse_date_param(date_to), "m.meeting_date <= ${idx}"),
         (track, "LOWER(m.track_name) = LOWER(${idx})"),
         (race_class, "r.race_class_code = ${idx}"),
         (race_class_group, "r.race_class_group = ${idx}"),
@@ -194,6 +198,8 @@ def _build_race_filters(
 async def list_races(
     request: Request,
     date: str | None = Query(None, description="Filter by meeting date (YYYY-MM-DD)"),
+    date_from: str | None = Query(None, description="Filter from meeting date (YYYY-MM-DD)"),
+    date_to: str | None = Query(None, description="Filter to meeting date (YYYY-MM-DD)"),
     track: str | None = Query(None),
     race_class: str | None = Query(None, description="Exact class code: G1, R75, MDN"),
     race_class_group: str | None = Query(None, description="group, listed, rating_band, maiden"),
@@ -203,6 +209,8 @@ async def list_races(
 ):
     where_sql, params = _build_race_filters(
         date=date,
+        date_from=date_from,
+        date_to=date_to,
         track=track,
         race_class=race_class,
         race_class_group=race_class_group,

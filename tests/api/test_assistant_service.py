@@ -170,6 +170,15 @@ def test_today_races_uses_race_card_plan():
     assert plan.confidence > 0.7
 
 
+def test_race_card_respects_60_day_window():
+    plan = build_rule_based_plan("show me races last 60 days")
+    assert plan is not None
+    validate_safe_select(plan.sql)
+    assert "m.meeting_date >= CURRENT_DATE - $1::int" in plan.sql
+    assert plan.params == [60]
+    assert plan.confidence > 0.7
+
+
 def test_best_trainers_does_not_match_rain_inside_trainers():
     plan = build_rule_based_plan("who are the best trainers at Belmont")
     assert plan is not None

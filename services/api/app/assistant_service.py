@@ -570,8 +570,8 @@ def build_rule_based_plan(question: str) -> AssistantPlan | None:
     if _is_value_or_alpha_question(lowered):
         return _build_value_runner_plan(question, days, today_only=_mentions_today(lowered))
 
-    if _is_today_race_card_question(lowered):
-        return _build_race_card_plan(question, today_only=True)
+    if _is_race_card_question(lowered):
+        return _build_race_card_plan(question, days, today_only=_mentions_today(lowered))
 
     if "trainer" in lowered and any(term in lowered for term in ("over-performing", "overperforming", "over performing", "market")):
         sql = (
@@ -934,10 +934,9 @@ def _is_market_mover_question(question: str) -> bool:
     return any(term in question for term in ("market mover", "market movers", "biggest movers", "price movers"))
 
 
-def _is_today_race_card_question(question: str) -> bool:
-    if not _mentions_today(question):
-        return False
-    return any(term in question for term in ("race", "races", "card", "meeting", "meetings"))
+def _is_race_card_question(question: str) -> bool:
+    has_scope = _mentions_today(question) or re.search(r"\blast\s+\d+\s+day", question)
+    return bool(has_scope) and any(term in question for term in ("race", "races", "card", "meeting", "meetings"))
 
 
 def _has_weather_intent(question: str) -> bool:
@@ -995,7 +994,7 @@ def _build_market_mover_plan(question: str, days: int, *, today_only: bool = Fal
     )
 
 
-def _build_race_card_plan(question: str, *, today_only: bool = False) -> AssistantPlan:
+def _build_race_card_plan(question: str, days: int, *, today_only: bool = False) -> AssistantPlan:
     date_clause = "m.meeting_date = CURRENT_DATE" if today_only else "m.meeting_date >= CURRENT_DATE - $1::int"
     sql = (
         "SELECT m.track_name, m.meeting_date, r.race_number, r.name, r.status, "
@@ -1007,7 +1006,7 @@ def _build_race_card_plan(question: str, *, today_only: bool = False) -> Assista
     return AssistantPlan(
         question=question,
         sql=sql,
-        params=[] if today_only else [180],
+        params=[] if today_only else [days],
         summary="Race card matching the requested date context.",
         confidence=0.76,
         chart={"type": "table"},

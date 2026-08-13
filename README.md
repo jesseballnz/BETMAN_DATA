@@ -12,6 +12,7 @@ BETMAN_DATA is the BETMAN horse-racing DataOS: a multi-tenant FastAPI + PostgreS
 - **Live delivery** — `/v1/live/{feed_id}` WebSocket fanout backed by Redis pub/sub
 - **Observability** — `/v1/health`, `/v1/ready`, `/v1/metrics`, structured request logging, and audit logging
 - **Demo-ready webapp** — polished Data Viewer with bundled fixtures, Live/Demo toggle, and resilient fallbacks
+- **Storage guardrails** — hourly high-frequency retention pruning and nightly PostgreSQL compaction for regenerated odds/signal fact tables
 
 ## Getting started in 5 minutes
 
@@ -165,6 +166,17 @@ make format          # run ruff format
 make security-check  # run ruff + simple secret pattern grep
 make status          # show docker status and API health
 ```
+
+## Production Storage Jobs
+
+Ubuntu/systemd hosts should enable both storage timers:
+
+```bash
+systemctl enable --now betman-data-retention-prune.timer
+systemctl enable --now betman-data-storage-compact.timer
+```
+
+`betman-data-retention-prune.timer` rolls old high-frequency odds, tote, and signal rows into daily summaries before deleting them. `betman-data-storage-compact.timer` runs nightly and reclaims PostgreSQL table files with `VACUUM FULL`; if root disk free space falls below the configured emergency floor, it resets only regenerated high-frequency fact tables while preserving race/runner/result tables and daily summaries.
 
 ## Documentation
 

@@ -245,6 +245,8 @@ export interface SignalPerformanceItem {
 
 interface RaceQueryOptions {
   date?: string
+  date_from?: string
+  date_to?: string
   track?: string
   race_class?: string
   race_class_group?: string
@@ -371,6 +373,8 @@ export const api = {
     request<RaceListResponse>(
       withQuery('/races', {
         date: options.date,
+        date_from: options.date_from,
+        date_to: options.date_to,
         track: options.track,
         race_class: options.race_class,
         race_class_group: options.race_class_group,
@@ -450,10 +454,10 @@ export const api = {
       }),
     ),
   askBetman: (question: string) => request<AssistantResponse>('/assistant/query', { method: 'POST', body: JSON.stringify({ question }) }),
-  searchOcr: (query: string, limit = 20) => request<SearchResponse>(withQuery('/search/ocr', { q: query, limit })),
-  searchTranscripts: (query: string, limit = 20) => request<SearchResponse>(withQuery('/search/transcripts', { q: query, limit })),
-  getIntelligenceLeaderboard: (raceDate?: string, minAlpha = 70, limit = 20) =>
-    request<HorseScores[]>(withQuery('/intelligence/scores/leaderboard', { race_date: raceDate, min_alpha: minAlpha, limit })),
+  searchOcr: (query: string, limit = 20, days = 60) => request<SearchResponse>(withQuery('/search/ocr', { q: query, limit, days })),
+  searchTranscripts: (query: string, limit = 20, days = 60) => request<SearchResponse>(withQuery('/search/transcripts', { q: query, limit, days })),
+  getIntelligenceLeaderboard: (raceDate?: string, minAlpha = 70, limit = 20, dateFrom?: string, dateTo?: string) =>
+    request<HorseScores[]>(withQuery('/intelligence/scores/leaderboard', { race_date: raceDate, min_alpha: minAlpha, limit, date_from: dateFrom, date_to: dateTo })),
   getRaceIntelligence: (raceId: number) => request<PreRaceIntelligence>(`/intelligence/races/${raceId}/intelligence`),
-  getSignalPerformance: (periodDays = 30) => request<SignalPerformanceItem[]>(withQuery('/intelligence/signals/performance', { period_days: periodDays })),
+  getSignalPerformance: (periodDays = 60) => request<SignalPerformanceItem[]>(withQuery('/intelligence/signals/performance', { period_days: periodDays })),
 }

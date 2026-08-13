@@ -9,6 +9,34 @@ from app.db import fetch_all, fetch_row
 
 router = APIRouter(prefix="/tracks", tags=["tracks", "barrier-analysis", "weather"])
 
+SURFACE_CONTEXT_SQL = """
+CASE lower(NULLIF({column}, ''))
+    WHEN 'grass' THEN 'turf'
+    WHEN 'turf' THEN 'turf'
+    WHEN 'synthetic' THEN 'synthetic'
+    WHEN 'dirt' THEN 'dirt'
+    ELSE COALESCE(NULLIF({column}, ''), 'unknown')
+END
+"""
+
+RELATIVE_BARRIER_ZONE_SQL = """
+CASE lower(COALESCE({column}, ''))
+    WHEN 'inside_third' THEN 'inside'
+    WHEN 'middle_third' THEN 'middle'
+    WHEN 'outside_third' THEN 'outside'
+    ELSE 'unknown'
+END
+"""
+
+DISTANCE_BAND_SQL = """
+CASE
+    WHEN {column} IS NULL THEN 'all'
+    WHEN {column} <= 1200 THEN 'sprint'
+    WHEN {column} <= 1600 THEN 'mile'
+    ELSE 'staying'
+END
+"""
+
 
 class BarrierStat(BaseModel):
     barrier_number: int
@@ -79,36 +107,58 @@ class ConditionsResponse(BaseModel):
 async def list_tracks(request: Request):
     rows = await fetch_all(
         request,
-        """
+        f"""
         SELECT
             track_name,
-            MAX(surface) FILTER (WHERE surface IS NOT NULL) AS surface,
-            MAX(race_count)::int AS race_count,
-            MAX(meeting_count)::int AS meeting_count,
-            MAX(barrier_sample_size)::int AS barrier_sample_size,
-            MAX(heatmap_cell_count)::int AS heatmap_cell_count
+            surface,
+            SUM(race_count)::int AS race_count,
+            SUM(meeting_count)::int AS meeting_count,
+            SUM(barrier_sample_size)::int AS barrier_sample_size,
+            GREATEST(
+                SUM(heatmap_cell_count),
+                SUM(derived_heatmap_cell_count)
+            )::int AS heatmap_cell_count
         FROM (
             SELECT
                 m.track_name,
-                m.surface,
+                {SURFACE_CONTEXT_SQL.format(column="m.surface")} AS surface,
                 COUNT(DISTINCT r.id) AS race_count,
                 COUNT(DISTINCT m.id) AS meeting_count,
                 0 AS barrier_sample_size,
-                0 AS heatmap_cell_count
+                0 AS heatmap_cell_count,
+                0 AS derived_heatmap_cell_count
             FROM meetings m
             LEFT JOIN races r ON r.meeting_id = m.id
-            GROUP BY m.track_name, m.surface
+            GROUP BY m.track_name, {SURFACE_CONTEXT_SQL.format(column="m.surface")}
             UNION ALL
-            SELECT bo.track_name, bo.surface, 0, 0, COUNT(*) AS barrier_sample_size, 0
+            SELECT
+                bo.track_name,
+                {SURFACE_CONTEXT_SQL.format(column="bo.surface")} AS surface,
+                0,
+                0,
+                COUNT(*) AS barrier_sample_size,
+                0,
+                COUNT(DISTINCT CONCAT_WS(
+                    '|',
+                    {RELATIVE_BARRIER_ZONE_SQL.format(column="bo.relative_barrier")},
+                    {DISTANCE_BAND_SQL.format(column="bo.distance_m")}
+                )) AS derived_heatmap_cell_count
             FROM barrier_outcomes bo
-            GROUP BY bo.track_name, bo.surface
+            GROUP BY bo.track_name, {SURFACE_CONTEXT_SQL.format(column="bo.surface")}
             UNION ALL
-            SELECT thc.track_name, thc.surface, 0, 0, 0, COUNT(*) AS heatmap_cell_count
+            SELECT
+                thc.track_name,
+                {SURFACE_CONTEXT_SQL.format(column="thc.surface")} AS surface,
+                0,
+                0,
+                0,
+                COUNT(*) AS heatmap_cell_count,
+                0
             FROM track_heatmap_cells thc
-            GROUP BY thc.track_name, thc.surface
+            GROUP BY thc.track_name, {SURFACE_CONTEXT_SQL.format(column="thc.surface")}
         ) t
-        GROUP BY track_name
-        ORDER BY track_name
+        GROUP BY track_name, surface
+        ORDER BY track_name, surface
         """,
     )
     return {"tracks": rows}
@@ -136,7 +186,9 @@ async def get_barrier_analysis(
 
     if surface != "all":
         params.append(surface)
-        clauses.append(f"LOWER(surface) = LOWER(${len(params)})")
+        clauses.append(
+            f"LOWER({SURFACE_CONTEXT_SQL.format(column='surface')}) = LOWER(${len(params)})"
+        )
 
     if condition is not None:
         params.append(condition)
@@ -220,18 +272,28 @@ async def get_heatmap(
     surface: str = "all",
     distance_band: str | None = None,
 ):
-    clauses = ["LOWER(track_name) = LOWER($1)"]
+    cell_clauses = ["LOWER(track_name) = LOWER($1)"]
+    outcome_clauses = ["LOWER(track_name) = LOWER($1)"]
     params: list[Any] = [track_name]
 
     if surface != "all":
         params.append(surface)
-        clauses.append(f"LOWER(surface) = LOWER(${len(params)})")
+        surface_clause = (
+            f"LOWER({SURFACE_CONTEXT_SQL.format(column='surface')}) = LOWER(${len(params)})"
+        )
+        cell_clauses.append(surface_clause)
+        outcome_clauses.append(surface_clause)
     if condition_category is not None:
         params.append(condition_category)
-        clauses.append(f"condition_category = ${len(params)}")
+        condition_clause = f"condition_category = ${len(params)}"
+        cell_clauses.append(condition_clause)
+        outcome_clauses.append(condition_clause)
     if distance_band is not None:
         params.append(distance_band)
-        clauses.append(f"distance_band = ${len(params)}")
+        cell_clauses.append(f"distance_band = ${len(params)}")
+        outcome_clauses.append(
+            f"{DISTANCE_BAND_SQL.format(column='distance_m')} = ${len(params)}"
+        )
 
     rows = await fetch_all(
         request,
@@ -240,11 +302,71 @@ async def get_heatmap(
                COALESCE(place_rate, 0)::float AS place_rate,
                COALESCE(intensity, 0)::float AS intensity
         FROM track_heatmap_cells
-        WHERE {" AND ".join(clauses)}
+        WHERE {" AND ".join(cell_clauses)}
         ORDER BY zone, distance_from_finish_band NULLS LAST
         """,
         *params,
     )
+    if not rows:
+        rows = await fetch_all(
+            request,
+            f"""
+            WITH aggregated AS (
+                SELECT
+                    {RELATIVE_BARRIER_ZONE_SQL.format(column='relative_barrier')} AS zone,
+                    {DISTANCE_BAND_SQL.format(column='distance_m')} AS distance_from_finish_band,
+                    COUNT(*)::int AS runner_count,
+                    COUNT(*) FILTER (WHERE won)::int AS win_count,
+                    COUNT(*) FILTER (WHERE placed)::int AS place_count
+                FROM barrier_outcomes
+                WHERE {" AND ".join(outcome_clauses)}
+                GROUP BY 1, 2
+            ),
+            rates AS (
+                SELECT
+                    zone,
+                    distance_from_finish_band,
+                    runner_count,
+                    ROUND(win_count::numeric * 100.0 / NULLIF(runner_count, 0), 2) AS win_rate,
+                    ROUND(place_count::numeric * 100.0 / NULLIF(runner_count, 0), 2) AS place_rate
+                FROM aggregated
+                WHERE runner_count > 0
+            )
+            SELECT
+                zone,
+                distance_from_finish_band,
+                win_rate::float AS win_rate,
+                place_rate::float AS place_rate,
+                CASE
+                    WHEN COALESCE(MAX(win_rate) OVER (), 0) = 0
+                         AND COALESCE(MAX(place_rate) OVER (), 0) = 0
+                    THEN 0::float
+                    ELSE ROUND(
+                        LEAST(
+                            1.0,
+                            COALESCE(win_rate / NULLIF(MAX(win_rate) OVER (), 0), 0) * 0.65
+                            + COALESCE(place_rate / NULLIF(MAX(place_rate) OVER (), 0), 0) * 0.35
+                        ),
+                        4
+                    )::float
+                END AS intensity
+            FROM rates
+            ORDER BY
+                CASE zone
+                    WHEN 'inside' THEN 1
+                    WHEN 'middle' THEN 2
+                    WHEN 'outside' THEN 3
+                    ELSE 4
+                END,
+                CASE distance_from_finish_band
+                    WHEN 'sprint' THEN 1
+                    WHEN 'mile' THEN 2
+                    WHEN 'staying' THEN 3
+                    ELSE 4
+                END
+            """,
+            *params,
+        )
     return HeatmapResponse(
         track_name=track_name,
         surface=surface,

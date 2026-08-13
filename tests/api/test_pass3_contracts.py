@@ -163,7 +163,7 @@ class TestMigration005Schema:
 
 
 # =============================================================================
-# Events and Search → explicit 501 tests
+# Events and pending endpoints → explicit 501 tests
 # =============================================================================
 
 
@@ -176,13 +176,15 @@ class TestExplicit501Endpoints:
         body = resp.json()
         assert "detail" in body
 
-    def test_search_ocr_returns_501(self):
+    def test_search_ocr_returns_empty_results_without_db(self):
         resp = client.get("/v1/search/ocr", params={"q": "Winx"}, headers=AUTH)
-        assert resp.status_code == 501
+        assert resp.status_code == 200
+        assert resp.json()["results"] == []
 
-    def test_search_transcripts_returns_501(self):
+    def test_search_transcripts_returns_empty_results_without_db(self):
         resp = client.get("/v1/search/transcripts", params={"q": "Winx"}, headers=AUTH)
-        assert resp.status_code == 501
+        assert resp.status_code == 200
+        assert resp.json()["results"] == []
 
     def test_search_similar_returns_501(self):
         resp = client.get("/v1/search/similar", params={"race_id": 1}, headers=AUTH)

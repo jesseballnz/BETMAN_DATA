@@ -1,6 +1,6 @@
 [Unit]
-Description=BETMAN Data high-frequency retention prune
-After=network-online.target postgresql.service betman-data-tab-poller.service
+Description=BETMAN Data high-frequency storage compaction
+After=network-online.target postgresql.service betman-data-retention-prune.service
 Wants=network-online.target
 
 [Service]
@@ -9,18 +9,17 @@ WorkingDirectory=/opt/betman/betman_data
 Environment=BETMAN_DATA_ROOT=/opt/betman/betman_data
 Environment=BETMAN_DATA_DB=betman_data
 Environment=BETMAN_DATA_PSQL_USER=postgres
-Environment=BETMAN_DATA_HIGH_FREQUENCY_RETENTION_DAYS=7
-Environment=BETMAN_DATA_SMART_MONEY_RETENTION_DAYS=2
-Environment=BETMAN_DATA_PRUNE_BATCH_SIZE=5000
-Environment=BETMAN_DATA_PRUNE_MAX_BATCHES=100
+Environment=BETMAN_DATA_COMPACT_MIN_TABLE_BYTES=536870912
+Environment=BETMAN_DATA_COMPACT_EMERGENCY_FREE_PCT=10
+Environment=BETMAN_DATA_COMPACT_ALLOW_EMERGENCY_TRUNCATE=1
 ExecStartPre=-/usr/bin/systemctl stop betman-data-tab-poller.timer
 ExecStartPre=/bin/bash -lc 'while systemctl is-active --quiet betman-data-tab-poller.service; do sleep 5; done'
-ExecStart=/opt/betman/betman_data/scripts/prune_data_retention.sh
+ExecStart=/opt/betman/betman_data/scripts/compact_high_frequency_storage.sh
 ExecStopPost=/usr/bin/systemctl start betman-data-tab-poller.timer
 User=root
 Group=root
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
-StandardOutput=append:/var/log/betman/betman-data-retention-prune.out.log
-StandardError=append:/var/log/betman/betman-data-retention-prune.err.log
+StandardOutput=append:/var/log/betman/betman-data-storage-compact.out.log
+StandardError=append:/var/log/betman/betman-data-storage-compact.err.log

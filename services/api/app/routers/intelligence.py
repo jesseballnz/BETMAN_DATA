@@ -194,6 +194,8 @@ async def get_horse_score_history(
 async def get_score_leaderboard(
     request: Request,
     race_date: date | None = Query(default=None, description="YYYY-MM-DD"),
+    date_from: date | None = Query(default=None, description="YYYY-MM-DD"),
+    date_to: date | None = Query(default=None, description="YYYY-MM-DD"),
     min_alpha: float = Query(default=70.0, description="Minimum alpha score"),
     limit: int = Query(default=20, le=100),
 ):
@@ -216,11 +218,15 @@ async def get_score_leaderboard(
             OR m.meeting_date = $2::date
             OR hs.calculated_at::date = $2::date
           )
+          AND ($3::date IS NULL OR m.meeting_date >= $3::date OR hs.calculated_at::date >= $3::date)
+          AND ($4::date IS NULL OR m.meeting_date <= $4::date OR hs.calculated_at::date <= $4::date)
         ORDER BY hs.alpha_score DESC, hs.calculated_at DESC
-        LIMIT $3
+        LIMIT $5
         """,
         min_alpha,
         race_date,
+        date_from,
+        date_to,
         limit,
     )
     return [HorseScores(**row) for row in rows]
@@ -229,7 +235,7 @@ async def get_score_leaderboard(
 @router.get("/signals/performance", response_model=list[SignalPerformanceItem])
 async def get_signal_performance(
     request: Request,
-    period_days: int = Query(default=30, description="Lookback period in days"),
+    period_days: int = Query(default=60, description="Lookback period in days"),
 ):
     rows = await fetch_all(
         request,
@@ -247,7 +253,14 @@ async def get_signal_performance(
                   * 100.0 / NULLIF(COUNT(*), 0),
                   2
                )::float AS strike_rate,
-               ROUND(((AVG(CASE WHEN re.final_position = 1 THEN 1.0 ELSE 0.0 END) - 0.1) * 100)::numeric, 2)::float AS edge
+               ROUND(
+                  (
+                    (
+                      AVG(CASE WHEN re.final_position = 1 THEN 1.0 ELSE 0.0 END) - 0.1
+                    ) * 100
+                  )::numeric,
+                  2
+               )::float AS edge
         FROM market_signals ms
         JOIN race_entries re ON re.id = ms.race_entry_id
         LEFT JOIN LATERAL (

@@ -89,7 +89,17 @@ SELECT DISTINCT ON (race->>'meeting_id')
     race->>'meeting_id',
     COALESCE(NULLIF(race->>'display_meeting_name', ''), race->>'meeting_name'),
     (race->>'race_date_nz')::date,
-    NULLIF(race->>'track_surface', ''),
+    CASE lower(NULLIF(race->>'track_surface', ''))
+        WHEN 'grass' THEN 'turf'
+        WHEN 'turf' THEN 'turf'
+        WHEN 'synthetic' THEN 'synthetic'
+        WHEN 'dirt' THEN 'dirt'
+        ELSE CASE
+            WHEN lower(COALESCE(race->>'display_meeting_name', race->>'meeting_name', '')) LIKE '%synthetic%' THEN 'synthetic'
+            WHEN race->>'type' = 'T' THEN 'turf'
+            ELSE NULLIF(race->>'track_surface', '')
+        END
+    END,
     NULLIF(race->>'country', ''),
     CASE
         WHEN lower(COALESCE(race->>'status', '')) IN ('final', 'closed') THEN 'completed'
@@ -141,7 +151,17 @@ SELECT
     COALESCE(NULLIF(race->>'class', ''), 'UNKNOWN'),
     rc."group",
     NULLIF(race #>> '{prize_monies,total_value}', '')::numeric,
-    NULLIF(race->>'track_surface', ''),
+    CASE lower(NULLIF(race->>'track_surface', ''))
+        WHEN 'grass' THEN 'turf'
+        WHEN 'turf' THEN 'turf'
+        WHEN 'synthetic' THEN 'synthetic'
+        WHEN 'dirt' THEN 'dirt'
+        ELSE CASE
+            WHEN lower(COALESCE(race->>'display_meeting_name', race->>'meeting_name', '')) LIKE '%synthetic%' THEN 'synthetic'
+            WHEN race->>'type' = 'T' THEN 'turf'
+            ELSE NULLIF(race->>'track_surface', '')
+        END
+    END,
     CASE
         WHEN lower(COALESCE(race->>'status', '')) IN ('final', 'closed') THEN 'finished'
         WHEN lower(COALESCE(race->>'status', '')) IN ('abandoned') THEN 'abandoned'
@@ -513,6 +533,7 @@ JOIN races r ON r.external_race_id = ranked.external_race_id
 JOIN runners run ON run.external_runner_id = ranked.runner->>'entrant_id'
 JOIN race_entries re ON re.race_id = r.id AND re.runner_id = run.id
 WHERE GREATEST(ranked.hold_pct, ranked.bet_pct) >= 5
+  AND COALESCE(r.actual_start_time, r.scheduled_start_time, now()) >= current_date - interval '7 days'
 ON CONFLICT DO NOTHING;
 
 WITH recent_smart_signals AS (
@@ -524,7 +545,7 @@ WITH recent_smart_signals AS (
         ms.detected_at
     FROM market_signals ms
     WHERE ms.signal_type = 'smart_money'
-      AND ms.detected_at >= current_date - interval '3 days'
+      AND ms.detected_at >= current_date - interval '2 days'
     ORDER BY ms.race_id, ms.race_entry_id, ms.detected_at, ms.magnitude DESC
 )
 INSERT INTO smart_money_indicators (race_id, race_entry_id, indicator_type, confidence, detected_at)

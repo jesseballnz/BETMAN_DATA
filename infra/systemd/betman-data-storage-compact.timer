@@ -1,0 +1,11 @@
+[Unit]
+Description=Run BETMAN Data high-frequency storage compaction nightly
+
+[Timer]
+OnCalendar=*-*-* 03:40:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=betman-data-storage-compact.service
+
+[Install]
+WantedBy=timers.target

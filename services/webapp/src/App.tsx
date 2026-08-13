@@ -73,6 +73,7 @@ const distancePresets: Array<{ key: string; label: string; min?: number; max?: n
   { key: 'staying', label: 'Staying 1601m+', min: 1601 },
 ]
 const MIN_HEATMAP_SCALE = 12
+const DEFAULT_RACING_WINDOW_DAYS = 60
 const DEFAULT_SUPPORT_HIT_TEXT = 'Search result item'
 const BARRIER_HEATMAP_COLORS = ['#13293d', '#0ea5e9', '#22d3ee', '#67e8f9']
 const TRACK_HEATMAP_COLORS = ['#1e1b4b', '#1d4ed8', '#0891b2', '#67e8f9']
@@ -86,6 +87,17 @@ function formatLocalDate(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+function localDateDaysAgo(days: number) {
+  const date = new Date()
+  date.setDate(date.getDate() - days)
+  return formatLocalDate(date)
+}
+
+function formatSurfaceLabel(surface: string | null) {
+  if (!surface) return 'Unknown'
+  return surface.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
 }
 
 function App() {
@@ -405,6 +417,7 @@ function LoginPage({ onLogin }: { onLogin: (token: string) => void }) {
 
 function OverviewView() {
   const { mode } = useMode()
+  const pulseDateFrom = useMemo(() => localDateDaysAgo(DEFAULT_RACING_WINDOW_DAYS), [])
   const { data, isLoading, error } = useQuery({
     queryKey: ['stats-overview', mode],
     queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_STATS_OVERVIEW) : api.getStatsOverview,
@@ -419,8 +432,8 @@ function OverviewView() {
     staleTime: mode === 'demo' ? Infinity : 0,
   })
   const pulse = useQuery({
-    queryKey: ['racing-pulse', mode],
-    queryFn: mode === 'demo' ? () => Promise.resolve(null) : () => api.getRacingPulse({ limit: 12 }),
+    queryKey: ['racing-pulse', pulseDateFrom, mode],
+    queryFn: mode === 'demo' ? () => Promise.resolve(null) : () => api.getRacingPulse({ date_from: pulseDateFrom, limit: 12 }),
     enabled: mode === 'live',
     refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.stats,
     staleTime: mode === 'demo' ? Infinity : 0,
@@ -482,7 +495,7 @@ function OverviewView() {
       <Card className="border-emerald-900/40 bg-slate-950/80">
         <div className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
           <div>
-            <PanelTitle title="Live thoroughbred racing pulse" subtitle="Real warehouse coverage from TAB race fields, results, people, tracks, and market prices." />
+            <PanelTitle title="Live thoroughbred racing pulse" subtitle={`Last ${DEFAULT_RACING_WINDOW_DAYS} days from TAB race fields, results, people, tracks, and market prices.`} />
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
               <SmallStat label="Races" value={formatNumber(pulse.data?.totals.races)} />
               <SmallStat label="Runners" value={formatNumber(pulse.data?.totals.runners)} />
@@ -756,10 +769,11 @@ function TodayView() {
 
 function SignalsView() {
   const { mode } = useMode()
-  const today = new Date().toISOString().slice(0, 10)
+  const today = formatLocalDate(new Date())
+  const sixtyDaysAgo = useMemo(() => localDateDaysAgo(DEFAULT_RACING_WINDOW_DAYS), [])
   const races = useQuery({
-    queryKey: ['signal-races', today, mode],
-    queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_RACE_LIST) : () => api.getRaces({ date: today, limit: 80 }),
+    queryKey: ['signal-races', sixtyDaysAgo, today, mode],
+    queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_RACE_LIST) : () => api.getRaces({ date_from: sixtyDaysAgo, date_to: today, limit: 80 }),
     refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals,
     staleTime: mode === 'demo' ? Infinity : 0,
   })
@@ -789,8 +803,8 @@ function SignalsView() {
       { queryKey: ['drifters', mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_DRIFTERS) : api.getDrifters, refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals, staleTime: mode === 'demo' ? Infinity : 0 },
       { queryKey: ['smart-money', mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_SMART_MONEY) : api.getSmartMoney, refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals, staleTime: mode === 'demo' ? Infinity : 0 },
       { queryKey: ['patterns', mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_PATTERNS) : api.getDiscoveryPatterns, refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals, staleTime: mode === 'demo' ? Infinity : 0 },
-      { queryKey: ['intelligence-leaderboard', mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_INTELLIGENCE_LEADERBOARD) : () => api.getIntelligenceLeaderboard(today), refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals, staleTime: mode === 'demo' ? Infinity : 0 },
-      { queryKey: ['signal-performance', mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_SIGNAL_PERFORMANCE) : () => api.getSignalPerformance(), refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.barriers, staleTime: mode === 'demo' ? Infinity : 0 },
+      { queryKey: ['intelligence-leaderboard', sixtyDaysAgo, today, mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_INTELLIGENCE_LEADERBOARD) : () => api.getIntelligenceLeaderboard(undefined, 70, 20, sixtyDaysAgo, today), refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.signals, staleTime: mode === 'demo' ? Infinity : 0 },
+      { queryKey: ['signal-performance', DEFAULT_RACING_WINDOW_DAYS, mode], queryFn: mode === 'demo' ? () => Promise.resolve(DEMO_SIGNAL_PERFORMANCE) : () => api.getSignalPerformance(DEFAULT_RACING_WINDOW_DAYS), refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.barriers, staleTime: mode === 'demo' ? Infinity : 0 },
     ],
   })
 
@@ -983,38 +997,46 @@ function GatesView() {
     staleTime: mode === 'demo' ? Infinity : 0,
   })
   const [trackName, setTrackName] = useState<string>('')
-  const [surface, setSurface] = useState<string>('all')
+  const [surface, setSurface] = useState<string>('')
   const [conditionCategory, setConditionCategory] = useState<string>('all')
   const [distancePreset, setDistancePreset] = useState<string>('all')
 
-  const selectedTrack = trackName || tracks.data?.tracks[0]?.track_name || ''
+  const trackContexts = tracks.data?.tracks ?? []
+  const trackNames = useMemo(() => Array.from(new Set(trackContexts.map((track) => track.track_name))), [trackContexts])
+  const selectedTrack = trackName || trackNames[0] || ''
+  const availableSurfaces = useMemo(
+    () => Array.from(new Set(trackContexts.filter((track) => track.track_name === selectedTrack).map((track) => track.surface ?? 'unknown'))),
+    [trackContexts, selectedTrack],
+  )
+  const selectedSurface = availableSurfaces.includes(surface) ? surface : availableSurfaces[0] ?? 'unknown'
   const selectedDistance = distancePresets.find((preset) => preset.key === distancePreset) ?? distancePresets[0]
 
   const [barriers, heatmap] = useQueries({
     queries: [
       {
-        queryKey: ['barriers', selectedTrack, surface, conditionCategory, selectedDistance.key, mode],
+        queryKey: ['barriers', selectedTrack, selectedSurface, conditionCategory, selectedDistance.key, mode],
         queryFn: mode === 'demo'
           ? () => Promise.resolve(DEMO_BARRIERS)
           : () => api.getBarrierAnalysis(selectedTrack, {
-              surface,
+              surface: selectedSurface,
               condition_category: conditionCategory === 'all' ? undefined : conditionCategory,
               distance_min: selectedDistance.min,
               distance_max: selectedDistance.max,
             }),
-        enabled: selectedTrack.length > 0,
+        enabled: selectedTrack.length > 0 && selectedSurface.length > 0,
         refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.barriers,
         staleTime: mode === 'demo' ? Infinity : 0,
       },
       {
-        queryKey: ['heatmap', selectedTrack, surface, conditionCategory, mode],
+        queryKey: ['heatmap', selectedTrack, selectedSurface, conditionCategory, selectedDistance.key, mode],
         queryFn: mode === 'demo'
           ? () => Promise.resolve(DEMO_HEATMAP)
           : () => api.getHeatmap(selectedTrack, {
-              surface,
+              surface: selectedSurface,
               condition_category: conditionCategory === 'all' ? undefined : conditionCategory,
+              distance_band: selectedDistance.key === 'all' ? undefined : selectedDistance.key,
             }),
-        enabled: selectedTrack.length > 0,
+        enabled: selectedTrack.length > 0 && selectedSurface.length > 0,
         refetchInterval: mode === 'demo' ? false : POLLING_INTERVALS.barriers,
         staleTime: mode === 'demo' ? Infinity : 0,
       },
@@ -1026,18 +1048,18 @@ function GatesView() {
       <SectionHeader title="Gates" subtitle="Barrier heat intelligence by track, surface, and distance context." />
       <Card>
         <div className="grid gap-3 lg:grid-cols-4">
-          <Select value={selectedTrack} onChange={(event) => setTrackName(event.target.value)}>
-            {(tracks.data?.tracks ?? []).map((track) => (
-              <option key={track.track_name} value={track.track_name}>{track.track_name}</option>
+          <Select value={selectedTrack} onChange={(event) => {
+            setTrackName(event.target.value)
+            setSurface('')
+          }}>
+            {trackNames.map((name) => (
+              <option key={name} value={name}>{name}</option>
             ))}
           </Select>
-          <Select value={surface} onChange={(event) => setSurface(event.target.value)}>
-            <option value="all">All surfaces</option>
-            <option value="Grass">Grass</option>
-            <option value="turf">Turf</option>
-            <option value="Synthetic">Synthetic</option>
-            <option value="dirt">Dirt</option>
-            <option value="unknown">Unknown</option>
+          <Select value={selectedSurface} onChange={(event) => setSurface(event.target.value)}>
+            {availableSurfaces.map((item) => (
+              <option key={item} value={item}>{formatSurfaceLabel(item)}</option>
+            ))}
           </Select>
           <Select value={conditionCategory} onChange={(event) => setConditionCategory(event.target.value)}>
             <option value="all">All conditions</option>
@@ -1101,12 +1123,10 @@ function PeopleView() {
     staleTime: mode === 'demo' ? Infinity : 0,
   })
   const [trackName, setTrackName] = useState<string>('')
-  const [windowDays, setWindowDays] = useState<string>('30')
+  const [windowDays, setWindowDays] = useState<string>(String(DEFAULT_RACING_WINDOW_DAYS))
   const dateFrom = useMemo(() => {
     if (windowDays === 'all') return undefined
-    const date = new Date()
-    date.setDate(date.getDate() - Number(windowDays))
-    return date.toISOString().slice(0, 10)
+    return localDateDaysAgo(Number(windowDays))
   }, [windowDays])
   const [trainerRates, jockeyRates] = useQueries({
     queries: [
@@ -1141,6 +1161,7 @@ function PeopleView() {
             ))}
           </Select>
           <Select value={windowDays} onChange={(event) => setWindowDays(event.target.value)}>
+            <option value="60">Last 60 days</option>
             <option value="30">Last 30 days</option>
             <option value="14">Last 14 days</option>
             <option value="7">Last 7 days</option>
@@ -1175,12 +1196,12 @@ function AskBetmanView() {
     queries: [
       {
         queryKey: ['search-ocr', activeQuery],
-        queryFn: () => api.searchOcr(activeQuery, 6),
+        queryFn: () => api.searchOcr(activeQuery, 6, 60),
         enabled: activeQuery.length > 0 && mode === 'live',
       },
       {
         queryKey: ['search-transcripts', activeQuery],
-        queryFn: () => api.searchTranscripts(activeQuery, 6),
+        queryFn: () => api.searchTranscripts(activeQuery, 6, 60),
         enabled: activeQuery.length > 0 && mode === 'live',
       },
     ],
