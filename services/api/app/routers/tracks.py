@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -15,6 +16,17 @@ TRACK_ALIASES = {"wodonga": "bet365 Park Wodonga"}
 def canonical_track_name(value: str) -> str:
     display_name = " ".join(str(value or "").strip().split())
     return TRACK_ALIASES.get(display_name.lower(), display_name)
+
+
+def parse_since(value: str | None) -> date | None:
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=422, detail="since must be YYYY-MM-DD") from exc
 
 SURFACE_CONTEXT_SQL = """
 CASE lower(NULLIF({column}, ''))
@@ -220,7 +232,7 @@ async def get_barrier_analysis(
         params.append(field_size_min)
         clauses.append(f"field_size >= ${len(params)}")
     if since is not None:
-        params.append(since)
+        params.append(parse_since(since))
         clauses.append(f"race_date >= ${len(params)}")
 
     rows = await fetch_all(
