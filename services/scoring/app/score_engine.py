@@ -42,8 +42,8 @@ class ScoreEngine:
             while not shutdown.is_set():
                 try:
                     await self._score_cycle()
-                except Exception:
-                    log.exception("score_engine.cycle_error")
+                except Exception as exc:
+                    log.exception("score_engine.cycle_error", error=str(exc))
                 try:
                     await asyncio.wait_for(
                         shutdown.wait(), timeout=self.settings.score_refresh_interval_s
@@ -62,7 +62,7 @@ class ScoreEngine:
             SELECT id FROM races
             WHERE status IN ('scheduled', 'running')
               AND scheduled_start_time BETWEEN now() - interval '30 minutes'
-                                            AND now() + interval '4 hours'
+                                            AND now() + interval '48 hours'
             ORDER BY scheduled_start_time, id
             LIMIT 200
             """

@@ -348,19 +348,44 @@ async def get_heatmap(
     rows = await fetch_all(
         request,
         f"""
-        SELECT zone, distance_band,
-               CASE distance_band
-                   WHEN 'sprint' THEN 'Sprint'
-                   WHEN 'mile' THEN 'Middle'
-                   WHEN 'staying' THEN 'Stayer'
-                   ELSE COALESCE(distance_from_finish_band, 'All distances')
-               END AS distance_from_finish_band,
-               COALESCE(win_rate, 0)::float AS win_rate,
-               COALESCE(place_rate, 0)::float AS place_rate,
-               COALESCE(intensity, 0)::float AS intensity
-        FROM track_heatmap_cells
-        WHERE {" AND ".join(cell_clauses)}
-        ORDER BY zone, distance_from_finish_band NULLS LAST
+        WITH grouped AS (
+            -- A stored cell exists per condition slice. The UI needs one
+            -- comparable Inside/Middle/Outside cell per distance band, so
+            -- combine those slices using their underlying runner counts.
+            SELECT
+                zone,
+                distance_band,
+                SUM(win_count)::int AS win_count,
+                SUM(place_count)::int AS place_count,
+                SUM(runner_count)::int AS runner_count
+            FROM track_heatmap_cells
+            WHERE {" AND ".join(cell_clauses)}
+            GROUP BY zone, distance_band
+        )
+        , totals AS (
+            SELECT
+                grouped.*,
+                SUM(win_count) OVER (PARTITION BY distance_band) AS band_wins,
+                SUM(place_count) OVER (PARTITION BY distance_band) AS band_places
+            FROM grouped
+        )
+        SELECT
+            zone,
+            distance_band,
+            CASE distance_band
+                WHEN 'sprint' THEN 'Sprint'
+                WHEN 'mile' THEN 'Middle'
+                WHEN 'staying' THEN 'Stayer'
+                ELSE 'All distances'
+            END AS distance_from_finish_band,
+            ROUND(win_count::numeric * 100.0 / NULLIF(band_wins, 0), 2)::float AS win_rate,
+            ROUND(place_count::numeric * 100.0 / NULLIF(band_places, 0), 2)::float AS place_rate,
+            (win_count::numeric / NULLIF(band_wins, 0))::float AS intensity
+        FROM totals
+        WHERE runner_count > 0
+        ORDER BY
+            CASE distance_band WHEN 'sprint' THEN 0 WHEN 'mile' THEN 1 WHEN 'staying' THEN 2 ELSE 3 END,
+            CASE zone WHEN 'inside' THEN 0 WHEN 'middle' THEN 1 WHEN 'outside' THEN 2 ELSE 3 END
         """,
         *params,
     )
