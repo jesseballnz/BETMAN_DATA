@@ -9,6 +9,13 @@ from app.db import fetch_all, fetch_row
 
 router = APIRouter(prefix="/tracks", tags=["tracks", "barrier-analysis", "weather"])
 
+TRACK_ALIASES = {"wodonga": "bet365 park wodonga"}
+
+
+def canonical_track_name(value: str) -> str:
+    normalized = " ".join(str(value or "").strip().lower().split())
+    return TRACK_ALIASES.get(normalized, normalized)
+
 SURFACE_CONTEXT_SQL = """
 CASE lower(NULLIF({column}, ''))
     WHEN 'grass' THEN 'turf'
@@ -184,8 +191,9 @@ async def get_barrier_analysis(
     field_size_min: int | None = None,
     since: str | None = None,
 ):
+    query_track = canonical_track_name(track_name)
     clauses = ["LOWER(track_name) = LOWER($1)"]
-    params: list[Any] = [track_name]
+    params: list[Any] = [query_track]
 
     if surface != "all":
         params.append(surface)
@@ -289,9 +297,10 @@ async def get_heatmap(
     surface: str = "all",
     distance_band: str | None = None,
 ):
+    query_track = canonical_track_name(track_name)
     cell_clauses = ["LOWER(track_name) = LOWER($1)"]
     outcome_clauses = ["LOWER(track_name) = LOWER($1)"]
-    params: list[Any] = [track_name]
+    params: list[Any] = [query_track]
 
     if surface != "all":
         params.append(surface)
@@ -404,6 +413,7 @@ async def get_weather(
     since: str | None = None,
     resolution: str = "raw",
 ):
+    query_track = canonical_track_name(track_name)
     station = await fetch_row(
         request,
         """
@@ -413,7 +423,7 @@ async def get_weather(
         ORDER BY id
         LIMIT 1
         """,
-        track_name,
+        query_track,
     )
     if station is None:
         return WeatherResponse(
@@ -470,6 +480,7 @@ async def get_weather(
     "/{track_name}/conditions", response_model=ConditionsResponse, summary="Track condition ratings"
 )
 async def get_conditions(request: Request, track_name: str):
+    query_track = canonical_track_name(track_name)
     rows = await fetch_all(
         request,
         """
@@ -481,7 +492,7 @@ async def get_conditions(request: Request, track_name: str):
         ORDER BY tcr.recorded_at DESC
         LIMIT 10
         """,
-        track_name,
+        query_track,
     )
     current = ConditionReading(**rows[0]) if rows else None
     return ConditionsResponse(
