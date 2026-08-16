@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.analytics_helpers import compute_person_metrics
 from app.db import fetch_all
+from app.routers.tracks import canonical_track_name
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 VALID_GROUP_BYS = {"track", "barrier"}
@@ -344,7 +345,7 @@ async def _get_people_rates(
     ]
     params: list[Any] = []
     if track is not None:
-        params.append(track)
+        params.append(canonical_track_name(track))
         clauses.append(f"LOWER(m.track_name) = LOWER(${len(params)})")
     if surface is not None:
         params.append(surface)

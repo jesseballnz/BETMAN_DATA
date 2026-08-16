@@ -10,7 +10,18 @@ from app.db import fetch_all, fetch_row
 
 router = APIRouter(prefix="/tracks", tags=["tracks", "barrier-analysis", "weather"])
 
-TRACK_ALIASES = {"wodonga": "bet365 Park Wodonga"}
+TRACK_ALIASES = {
+    "beaudesert": "Aquis Beaudesert",
+    "canterbury": "Canterbury Park",
+    "echuca": "bet365 Echuca",
+    "geelong": "bet365 Geelong",
+    "mildura": "bet365 Mildura",
+    "randwick": "Royal Randwick",
+    "rosehill": "Rosehill Gardens",
+    "sandown": "Sportsbet Sandown",
+    "wangaratta": "Sportsbet-Wangaratta",
+    "wodonga": "bet365 Park Wodonga",
+}
 
 
 def canonical_track_name(value: str) -> str:
