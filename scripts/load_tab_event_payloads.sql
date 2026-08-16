@@ -89,16 +89,12 @@ SELECT DISTINCT ON (race->>'meeting_id')
     race->>'meeting_id',
     COALESCE(NULLIF(race->>'display_meeting_name', ''), race->>'meeting_name'),
     (race->>'race_date_nz')::date,
-    CASE lower(NULLIF(race->>'track_surface', ''))
-        WHEN 'grass' THEN 'turf'
-        WHEN 'turf' THEN 'turf'
-        WHEN 'synthetic' THEN 'synthetic'
-        WHEN 'dirt' THEN 'dirt'
-        ELSE CASE
-            WHEN lower(COALESCE(race->>'display_meeting_name', race->>'meeting_name', '')) LIKE '%synthetic%' THEN 'synthetic'
-            WHEN race->>'type' = 'T' THEN 'turf'
-            ELSE NULLIF(race->>'track_surface', '')
-        END
+    CASE
+        WHEN lower(COALESCE(NULLIF(race->>'track_surface', ''), '')) ~ 'synthetic|poly|tapeta|awt'
+          OR lower(COALESCE(NULLIF(race->>'track_condition', ''), '')) ~ 'synthetic|poly|tapeta|awt'
+          OR lower(COALESCE(NULLIF(race->>'display_meeting_name', ''), NULLIF(race->>'meeting_name', ''), '')) ~ 'synthetic|poly|tapeta|awt'
+            THEN 'synthetic'
+        ELSE 'turf'
     END,
     NULLIF(race->>'country', ''),
     CASE
@@ -151,16 +147,12 @@ SELECT
     COALESCE(NULLIF(race->>'class', ''), 'UNKNOWN'),
     rc."group",
     NULLIF(race #>> '{prize_monies,total_value}', '')::numeric,
-    CASE lower(NULLIF(race->>'track_surface', ''))
-        WHEN 'grass' THEN 'turf'
-        WHEN 'turf' THEN 'turf'
-        WHEN 'synthetic' THEN 'synthetic'
-        WHEN 'dirt' THEN 'dirt'
-        ELSE CASE
-            WHEN lower(COALESCE(race->>'display_meeting_name', race->>'meeting_name', '')) LIKE '%synthetic%' THEN 'synthetic'
-            WHEN race->>'type' = 'T' THEN 'turf'
-            ELSE NULLIF(race->>'track_surface', '')
-        END
+    CASE
+        WHEN lower(COALESCE(NULLIF(race->>'track_surface', ''), '')) ~ 'synthetic|poly|tapeta|awt'
+          OR lower(COALESCE(NULLIF(race->>'track_condition', ''), '')) ~ 'synthetic|poly|tapeta|awt'
+          OR lower(COALESCE(NULLIF(race->>'display_meeting_name', ''), NULLIF(race->>'meeting_name', ''), '')) ~ 'synthetic|poly|tapeta|awt'
+            THEN 'synthetic'
+        ELSE 'turf'
     END,
     CASE
         WHEN lower(COALESCE(race->>'status', '')) IN ('final', 'closed') THEN 'finished'
