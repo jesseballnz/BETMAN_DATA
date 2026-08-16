@@ -93,6 +93,7 @@ class BarrierAnalysisResponse(BaseModel):
 
 class HeatmapCell(BaseModel):
     zone: str
+    distance_band: str | None = None
     distance_from_finish_band: str | None
     win_rate: float
     place_rate: float
@@ -347,7 +348,7 @@ async def get_heatmap(
     rows = await fetch_all(
         request,
         f"""
-        SELECT zone, distance_from_finish_band, COALESCE(win_rate, 0)::float AS win_rate,
+        SELECT zone, distance_band, distance_from_finish_band, COALESCE(win_rate, 0)::float AS win_rate,
                COALESCE(place_rate, 0)::float AS place_rate,
                COALESCE(intensity, 0)::float AS intensity
         FROM track_heatmap_cells
