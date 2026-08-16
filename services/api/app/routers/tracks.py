@@ -348,7 +348,14 @@ async def get_heatmap(
     rows = await fetch_all(
         request,
         f"""
-        SELECT zone, distance_band, distance_from_finish_band, COALESCE(win_rate, 0)::float AS win_rate,
+        SELECT zone, distance_band,
+               CASE distance_band
+                   WHEN 'sprint' THEN 'Sprint'
+                   WHEN 'mile' THEN 'Middle'
+                   WHEN 'staying' THEN 'Stayer'
+                   ELSE COALESCE(distance_from_finish_band, 'All distances')
+               END AS distance_from_finish_band,
+               COALESCE(win_rate, 0)::float AS win_rate,
                COALESCE(place_rate, 0)::float AS place_rate,
                COALESCE(intensity, 0)::float AS intensity
         FROM track_heatmap_cells
