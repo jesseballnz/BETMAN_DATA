@@ -9,12 +9,12 @@ from app.db import fetch_all, fetch_row
 
 router = APIRouter(prefix="/tracks", tags=["tracks", "barrier-analysis", "weather"])
 
-TRACK_ALIASES = {"wodonga": "bet365 park wodonga"}
+TRACK_ALIASES = {"wodonga": "bet365 Park Wodonga"}
 
 
 def canonical_track_name(value: str) -> str:
-    normalized = " ".join(str(value or "").strip().lower().split())
-    return TRACK_ALIASES.get(normalized, normalized)
+    display_name = " ".join(str(value or "").strip().split())
+    return TRACK_ALIASES.get(display_name.lower(), display_name)
 
 SURFACE_CONTEXT_SQL = """
 CASE lower(NULLIF({column}, ''))
