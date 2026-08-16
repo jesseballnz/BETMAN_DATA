@@ -271,6 +271,45 @@ async def list_races(
     return {"races": races, "total": total, "limit": limit, "offset": offset}
 
 
+@router.get("/{race_id}/analysis", summary="Get deterministic race analysis package")
+async def get_race_analysis(request: Request, race_id: int):
+    """Return backend-owned features and predictions for explanation clients.
+
+    The endpoint exposes calculations already persisted by the scoring service;
+    clients must not recreate probabilities, staking, or simulation locally.
+    """
+    race = await fetch_row(
+        request,
+        "SELECT id, status FROM races WHERE id = $1",
+        race_id,
+    )
+    if not race:
+        raise HTTPException(status_code=404, detail="race_not_found")
+    rows = await fetch_all(
+        request,
+        """
+        SELECT f.race_entry_id, ru.name AS runner_name, re.barrier_number,
+               f.feature_version, f.generated_at, f.source_cutoff_at,
+               f.feature_vector, f.provenance, f.missing_features,
+               f.market_price, f.market_probability, f.model_probability,
+               f.fair_odds, f.edge, f.confidence
+        FROM race_analysis_features f
+        JOIN race_entries re ON re.id = f.race_entry_id
+        JOIN runners ru ON ru.id = f.runner_id
+        WHERE f.race_id = $1
+        ORDER BY f.model_probability DESC NULLS LAST, re.barrier_number NULLS LAST
+        """,
+        race_id,
+    )
+    return {
+        "race_id": race_id,
+        "status": race["status"],
+        "calculation_authority": "betman-scoring-service",
+        "probabilities_are_backend_owned": True,
+        "features": [dict(row) for row in rows],
+    }
+
+
 @router.get("/{race_id}", summary="Get race detail")
 async def get_race(request: Request, race_id: int):
     race = await fetch_row(
