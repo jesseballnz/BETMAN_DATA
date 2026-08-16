@@ -1,0 +1,29 @@
+[Unit]
+Description=BETMAN deterministic scoring service
+After=network-online.target postgresql.service redis-server.service betman-data-api.service
+Wants=network-online.target
+Requires=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/betman/betman_data/services/scoring
+EnvironmentFile=/etc/betman/betman-data.env
+ExecStart=/opt/betman/betman_data/services/api/.venv/bin/python -m app.main
+Restart=always
+RestartSec=5
+User=betman
+Group=betman
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/betman/betman_data /var/log/betman
+MemoryMax=384M
+MemoryHigh=256M
+TasksMax=96
+LimitNOFILE=8192
+StandardOutput=append:/var/log/betman/betman-scoring.out.log
+StandardError=append:/var/log/betman/betman-scoring.err.log
+
+[Install]
+WantedBy=multi-user.target

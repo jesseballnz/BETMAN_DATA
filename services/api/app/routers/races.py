@@ -310,6 +310,82 @@ async def get_race_analysis(request: Request, race_id: int):
     }
 
 
+@router.get("/external/{external_race_id}/analysis", summary="Get analysis by provider race id")
+async def get_external_race_analysis(request: Request, external_race_id: str):
+    race = await fetch_row(
+        request,
+        "SELECT id FROM races WHERE external_race_id = $1 LIMIT 1",
+        external_race_id,
+    )
+    if not race:
+        raise HTTPException(status_code=404, detail="race_not_found")
+    return await get_race_analysis(request, race["id"])
+
+
+@router.get("/external/{external_race_id}/runner-fit", summary="Get runner track and distance records")
+async def get_external_runner_fit(request: Request, external_race_id: str):
+    """Return exact historical runner records for the selected race context."""
+    race = await fetch_row(
+        request,
+        "SELECT id FROM races WHERE external_race_id = $1 LIMIT 1",
+        external_race_id,
+    )
+    if not race:
+        raise HTTPException(status_code=404, detail="race_not_found")
+    rows = await fetch_all(
+        request,
+        """
+        WITH target AS (
+            SELECT r.id, r.distance_m, m.track_name,
+                   COALESCE((SELECT condition_category FROM track_condition_readings tcr
+                             WHERE tcr.race_id = r.id OR (tcr.race_id IS NULL AND tcr.meeting_id = r.meeting_id)
+                             ORDER BY (tcr.race_id = r.id) DESC, recorded_at DESC LIMIT 1), 'unknown') AS condition_category
+            FROM races r JOIN meetings m ON m.id = r.meeting_id WHERE r.id = $1
+        )
+        SELECT ru.name AS runner_name,
+               jsonb_build_object('starts', COALESCE(track.starts, 0), 'wins', COALESCE(track.wins, 0),
+                                  'seconds', COALESCE(track.seconds, 0), 'thirds', COALESCE(track.thirds, 0)) AS track,
+               jsonb_build_object('starts', COALESCE(distance.starts, 0), 'wins', COALESCE(distance.wins, 0),
+                                  'seconds', COALESCE(distance.seconds, 0), 'thirds', COALESCE(distance.thirds, 0)) AS distance,
+               jsonb_build_object('starts', COALESCE(condition.starts, 0), 'wins', COALESCE(condition.wins, 0),
+                                  'seconds', COALESCE(condition.seconds, 0), 'thirds', COALESCE(condition.thirds, 0)) AS condition
+        FROM target t
+        JOIN race_entries current_entry ON current_entry.race_id = t.id AND NOT current_entry.scratched
+        JOIN runners ru ON ru.id = current_entry.runner_id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::int AS starts, COUNT(*) FILTER (WHERE rr.finish_position = 1)::int AS wins,
+                   COUNT(*) FILTER (WHERE rr.finish_position = 2)::int AS seconds, COUNT(*) FILTER (WHERE rr.finish_position = 3)::int AS thirds
+            FROM race_entries hre JOIN races hr ON hr.id = hre.race_id JOIN meetings hm ON hm.id = hr.meeting_id
+            JOIN race_results rr ON rr.race_entry_id = hre.id
+            WHERE hre.runner_id = current_entry.runner_id AND hr.id <> t.id AND NOT hre.scratched
+              AND rr.result_quality = 'verified' AND LOWER(hm.track_name) = LOWER(t.track_name)
+        ) track ON true
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::int AS starts, COUNT(*) FILTER (WHERE rr.finish_position = 1)::int AS wins,
+                   COUNT(*) FILTER (WHERE rr.finish_position = 2)::int AS seconds, COUNT(*) FILTER (WHERE rr.finish_position = 3)::int AS thirds
+            FROM race_entries hre JOIN races hr ON hr.id = hre.race_id
+            JOIN race_results rr ON rr.race_entry_id = hre.id
+            WHERE hre.runner_id = current_entry.runner_id AND hr.id <> t.id AND NOT hre.scratched
+              AND rr.result_quality = 'verified' AND hr.distance_m = t.distance_m
+        ) distance ON true
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::int AS starts, COUNT(*) FILTER (WHERE rr.finish_position = 1)::int AS wins,
+                   COUNT(*) FILTER (WHERE rr.finish_position = 2)::int AS seconds, COUNT(*) FILTER (WHERE rr.finish_position = 3)::int AS thirds
+            FROM race_entries hre JOIN races hr ON hr.id = hre.race_id
+            JOIN race_results rr ON rr.race_entry_id = hre.id
+            LEFT JOIN LATERAL (SELECT condition_category FROM track_condition_readings tcr
+                               WHERE tcr.race_id = hr.id OR (tcr.race_id IS NULL AND tcr.meeting_id = hr.meeting_id)
+                               ORDER BY (tcr.race_id = hr.id) DESC, recorded_at DESC LIMIT 1) hc ON true
+            WHERE hre.runner_id = current_entry.runner_id AND hr.id <> t.id AND NOT hre.scratched
+              AND rr.result_quality = 'verified' AND COALESCE(hc.condition_category, 'unknown') = t.condition_category
+        ) condition ON true
+        ORDER BY current_entry.barrier_number NULLS LAST, ru.name
+        """,
+        race["id"],
+    )
+    return {"race_id": race["id"], "runner_fit": [dict(row) for row in rows]}
+
+
 @router.get("/{race_id}", summary="Get race detail")
 async def get_race(request: Request, race_id: int):
     race = await fetch_row(

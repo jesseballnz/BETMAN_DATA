@@ -55,6 +55,9 @@ class BarrierAnalysisResponse(BaseModel):
     surface: str
     filters: dict
     sample_size: int
+    sample_races: int = 0
+    sample_date_from: str | None = None
+    sample_date_to: str | None = None
     barriers: list[BarrierStat]
 
 
@@ -245,6 +248,17 @@ async def get_barrier_analysis(
     )
 
     sample_size = sum(row["total_runners"] for row in rows)
+    metadata = await fetch_row(
+        request,
+        f"""
+        SELECT COUNT(DISTINCT race_id)::int AS sample_races,
+               MIN(race_date)::text AS sample_date_from,
+               MAX(race_date)::text AS sample_date_to
+        FROM barrier_outcomes
+        WHERE {" AND ".join(clauses)}
+        """,
+        *params,
+    )
     return BarrierAnalysisResponse(
         track_name=track_name,
         surface=surface,
@@ -258,6 +272,9 @@ async def get_barrier_analysis(
             "since": since,
         },
         sample_size=sample_size,
+        sample_races=int((metadata or {}).get("sample_races") or 0),
+        sample_date_from=(metadata or {}).get("sample_date_from"),
+        sample_date_to=(metadata or {}).get("sample_date_to"),
         barriers=[BarrierStat(**{**row, "avg_win_price": None}) for row in rows],
     )
 
