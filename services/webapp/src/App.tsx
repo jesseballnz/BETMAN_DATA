@@ -3,7 +3,7 @@ import { AllCommunityModule, ModuleRegistry, type ColDef, type ValueGetterParams
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 import ReactECharts from 'echarts-for-react'
-import { Database, Gauge, KeyRound, Map, Search, Sparkles, Users } from 'lucide-react'
+import { Database, Gauge, KeyRound, LogOut, Map, Search, Sparkles, Users } from 'lucide-react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 
 import { Button } from './components/ui/button'
@@ -12,11 +12,13 @@ import { Input } from './components/ui/input'
 import { Select } from './components/ui/select'
 import {
   POLLING_INTERVALS,
+  DATA_LOGIN_REQUIRED_EVENT,
   api,
   buildLiveWebSocketUrl,
   clearDataToken,
   getDataToken,
   loginWithData,
+  notifyDataLoginRequired,
   setDataToken,
   type AssistantResponse,
   type BarrierResponse,
@@ -102,6 +104,13 @@ function formatSurfaceLabel(surface: string | null) {
 
 function App() {
   const [token, setToken] = useState(() => getDataToken())
+
+  useEffect(() => {
+    const handleLoginRequired = () => setToken(null)
+    window.addEventListener(DATA_LOGIN_REQUIRED_EVENT, handleLoginRequired)
+    return () => window.removeEventListener(DATA_LOGIN_REQUIRED_EVENT, handleLoginRequired)
+  }, [])
+
   if (!token) return <LoginPage onLogin={setToken} />
   return <AuthenticatedApp onLogout={() => {
     clearDataToken()
@@ -194,32 +203,36 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
                 )}
               </div>
             </div>
-            <nav className="grid gap-2 sm:grid-cols-3 lg:flex">
-              {navigation.map(({ to, label, icon: Icon }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition duration-300',
-                      isActive
-                        ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300 shadow-[0_0_16px_rgba(34,211,238,0.25)]'
-                        : 'border-slate-800 bg-slate-900/80 text-slate-400 hover:border-slate-700 hover:text-slate-100',
-                    )
-                  }
-                >
-                  <Icon className="h-4 w-4" />
-                  {label}
-                </NavLink>
-              ))}
+            <div className="flex flex-col gap-2 lg:items-end">
+              <nav className="grid gap-2 sm:grid-cols-3 lg:flex">
+                {navigation.map(({ to, label, icon: Icon }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    className={({ isActive }) =>
+                      cn(
+                        'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition duration-300',
+                        isActive
+                          ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300 shadow-[0_0_16px_rgba(34,211,238,0.25)]'
+                          : 'border-slate-800 bg-slate-900/80 text-slate-400 hover:border-slate-700 hover:text-slate-100',
+                      )
+                    }
+                  >
+                    <Icon className="h-4 w-4" />
+                    {label}
+                  </NavLink>
+                ))}
+              </nav>
               <button
                 type="button"
                 onClick={onLogout}
-                className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-2 text-sm text-slate-400 transition duration-300 hover:border-slate-700 hover:text-slate-100"
+                title="Sign out"
+                className="flex w-fit items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-400 transition-all hover:bg-slate-800 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
               >
+                <LogOut className="h-4 w-4" />
                 Sign out
               </button>
-            </nav>
+            </div>
           </div>
           <div className="mt-4 flex flex-col gap-3">
             <ConnectionStatus mode={mode} socketConnected={liveSocket.connected} health={health.data} error={health.error as Error | null} />
@@ -1599,7 +1612,12 @@ function useLiveSocket(mode: 'demo' | 'live', queryClient: ReturnType<typeof use
 
     const socket = new WebSocket(buildLiveWebSocketUrl(1))
     socket.onopen = () => setConnected(true)
-    socket.onclose = () => setConnected(false)
+    socket.onclose = (event) => {
+      setConnected(false)
+      if (event.code === 1006 || event.reason.includes('betman_data_login_required')) {
+        notifyDataLoginRequired()
+      }
+    }
     socket.onerror = () => setConnected(false)
     socket.onmessage = () => {
       queryClient.invalidateQueries({ queryKey: ['meetings'] })

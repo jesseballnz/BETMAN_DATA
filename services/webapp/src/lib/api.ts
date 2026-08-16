@@ -1,6 +1,7 @@
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 const API_BEARER_TOKEN = import.meta.env.VITE_API_BEARER_TOKEN
 const DATA_TOKEN_KEY = 'betman_data_token'
+export const DATA_LOGIN_REQUIRED_EVENT = 'betman-data-login-required'
 
 export const POLLING_INTERVALS = {
   stats: 15000,
@@ -317,9 +318,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers })
   if (!response.ok) {
     const text = await response.text()
+    if (isDataLoginRequired(response.status, text)) {
+      notifyDataLoginRequired()
+    }
     throw new Error(text || `Request failed: ${response.status}`)
   }
   return (await response.json()) as T
+}
+
+function isDataLoginRequired(status: number, text: string) {
+  if (status !== 401) return false
+  if (text.includes('betman_data_login_required')) return true
+  try {
+    const body = JSON.parse(text) as { error?: unknown }
+    return body.error === 'betman_data_login_required'
+  } catch {
+    return false
+  }
+}
+
+export function notifyDataLoginRequired() {
+  clearDataToken()
+  window.dispatchEvent(new Event(DATA_LOGIN_REQUIRED_EVENT))
 }
 
 export function getDataToken() {
