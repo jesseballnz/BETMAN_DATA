@@ -168,3 +168,22 @@ def test_track_heatmap_derives_cells_from_barrier_outcomes(monkeypatch):
         }
     ]
     assert len(calls) == 2
+
+
+def test_track_heatmap_middle_alias_uses_legacy_mile_rows(monkeypatch):
+    captured = []
+
+    async def fake_fetch_all(request, query, *params):
+        captured.append(params)
+        return []
+
+    monkeypatch.setattr(tracks_module, "fetch_all", fake_fetch_all)
+
+    response = client.get(
+        "/v1/tracks/Albury/heatmap?surface=turf&distance_band=middle",
+        headers=AUTH,
+    )
+
+    assert response.status_code == 200
+    assert captured
+    assert all(params == ("Albury", "turf", "mile") for params in captured)
