@@ -339,7 +339,10 @@ async def get_heatmap(
         cell_clauses.append(condition_clause)
         outcome_clauses.append(condition_clause)
     if distance_band is not None:
-        params.append(distance_band)
+        # Core labels 1,201–1,600m as ``middle`` while older warehouse
+        # records use the canonical stored label ``mile``.
+        distance_value = "mile" if str(distance_band).strip().lower() == "middle" else distance_band
+        params.append(distance_value)
         cell_clauses.append(f"distance_band = ${len(params)}")
         outcome_clauses.append(
             f"{DISTANCE_BAND_SQL.format(column='distance_m')} = ${len(params)}"
