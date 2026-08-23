@@ -11,6 +11,26 @@ client = TestClient(app)
 AUTH = {"Authorization": "Bearer " + settings.admin_api_key}
 
 
+def test_core_track_names_resolve_to_warehouse_names():
+    expected = {
+        "Ballarat": "Sportsbet-Ballarat",
+        "Ballarat Synthetic": "Sportsbet-Ballarat Synthetic",
+        "Devonport Synthetic": "Devonport Tapeta",
+        "Gold Coast": "Aquis Park Gold Coast",
+        "Pakenham Synthetic": "Sportsbet-Pakenham Synthetic",
+    }
+
+    for core_name, warehouse_name in expected.items():
+        assert tracks_module.canonical_track_name(core_name) == warehouse_name
+
+
+def test_track_alias_lookup_is_case_and_whitespace_insensitive():
+    assert (
+        tracks_module.canonical_track_name("  PAKENHAM   SYNTHETIC  ")
+        == "Sportsbet-Pakenham Synthetic"
+    )
+
+
 def test_data_viewer_endpoints_empty_safe():
     checks = [
         ("GET", "/v1/health"),

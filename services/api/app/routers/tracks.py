@@ -11,11 +11,16 @@ from app.db import fetch_all, fetch_row
 router = APIRouter(prefix="/tracks", tags=["tracks", "barrier-analysis", "weather"])
 
 TRACK_ALIASES = {
+    "ballarat": "Sportsbet-Ballarat",
+    "ballarat synthetic": "Sportsbet-Ballarat Synthetic",
     "beaudesert": "Aquis Beaudesert",
     "canterbury": "Canterbury Park",
+    "devonport synthetic": "Devonport Tapeta",
     "echuca": "bet365 Echuca",
     "geelong": "bet365 Geelong",
+    "gold coast": "Aquis Park Gold Coast",
     "mildura": "bet365 Mildura",
+    "pakenham synthetic": "Sportsbet-Pakenham Synthetic",
     "randwick": "Royal Randwick",
     "rosehill": "Rosehill Gardens",
     "sandown": "Sportsbet Sandown",
