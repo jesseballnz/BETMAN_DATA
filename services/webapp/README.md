@@ -21,6 +21,18 @@ Environment variables:
 - `VITE_API_BASE_URL` — defaults to `http://localhost:8000/v1`
 - `VITE_API_BEARER_TOKEN` — optional bearer token for direct API access outside docker-compose
 
+## Native viewer authentication
+
+`server.cjs` delegates username/password validation to BETMAN Core's `/api/login` endpoint.
+
+- `BETMAN_CORE_ORIGIN` — the environment-local BETMAN Core origin
+- `BETMAN_DATA_ADMIN_USER` — the sole Data admin username; defaults to `betman`
+- `BETMAN_DATA_AUTH_SECRET` — HMAC secret for Data viewer sessions
+- `BETMAN_DATA_AUTH_TOKEN_TTL_MS` — session lifetime in milliseconds
+- `API_ADMIN_PROXY_AUTHORIZATION` — optional admin upstream bearer header; defaults to `ADMIN_API_KEY`
+
+Every valid Core user can sign in. The configured BETMAN admin can access all proxied API routes. Other users are restricted to read routes plus `POST /v1/assistant/query`, whose database executor is read-only; admin and mutation requests return `403 betman_data_read_only`.
+
 ## Docker / compose
 
 The production container builds the Vite app and serves it with nginx on port `8080`.

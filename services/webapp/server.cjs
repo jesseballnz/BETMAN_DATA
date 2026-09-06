@@ -13,11 +13,14 @@ const ROOT = process.env.BETMAN_DATA_WEBAPP_ROOT || '/opt/betman/betman_data/ser
 const API_HOST = process.env.BETMAN_DATA_API_HOST || '127.0.0.1';
 const API_PORT = Number(process.env.BETMAN_DATA_API_PORT || 18086);
 const API_AUTHORIZATION = process.env.API_PROXY_AUTHORIZATION || '';
+const API_ADMIN_AUTHORIZATION = process.env.API_ADMIN_PROXY_AUTHORIZATION
+  || (process.env.ADMIN_API_KEY ? `Bearer ${process.env.ADMIN_API_KEY}` : '');
 const TLS_CERT = process.env.BETMAN_DATA_TLS_CERT || '';
 const TLS_KEY = process.env.BETMAN_DATA_TLS_KEY || '';
-const PASSWORD_SETUP_ORIGIN = process.env.BETMAN_PASSWORD_SETUP_ORIGIN || 'https://170.64.201.182';
+const PASSWORD_SETUP_ORIGIN = process.env.BETMAN_PASSWORD_SETUP_ORIGIN || 'https://betman.co.nz';
+const CORE_ORIGIN = process.env.BETMAN_CORE_ORIGIN || PASSWORD_SETUP_ORIGIN;
+const ADMIN_USER = String(process.env.BETMAN_DATA_ADMIN_USER || 'betman').trim().toLowerCase();
 
-const AUTH_USER = process.env.BETMAN_DATA_AUTH_USER || '';
 const AUTH_PASSWORD = process.env.BETMAN_DATA_AUTH_PASSWORD || '';
 const AUTH_SECRET = process.env.BETMAN_DATA_AUTH_SECRET || AUTH_PASSWORD || API_AUTHORIZATION || 'betman-data-dev-secret';
 const AUTH_TOKEN_TTL_MS = Number(process.env.BETMAN_DATA_AUTH_TOKEN_TTL_MS || 8 * 60 * 60 * 1000);
@@ -81,20 +84,23 @@ function safeEqual(left, right) {
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function credentialsAreValid(username, password) {
-  if (!AUTH_USER || !AUTH_PASSWORD) return false;
-  return safeEqual(username, AUTH_USER) && safeEqual(password, AUTH_PASSWORD);
+function normalizeUsername(username) {
+  return String(username || '').trim().toLowerCase();
 }
 
-function signTokenPart(subject, expiresAt) {
+function signTokenPart(payload, expiresAt) {
   return crypto
     .createHmac('sha256', AUTH_SECRET)
-    .update(`${subject}.${expiresAt}`)
+    .update(`${payload}.${expiresAt}`)
     .digest('base64url');
 }
 
 function createDataToken(username) {
-  const subject = Buffer.from(username).toString('base64url');
+  const normalized = normalizeUsername(username);
+  const subject = Buffer.from(JSON.stringify({
+    sub: normalized,
+    role: normalized === ADMIN_USER ? 'admin' : 'read',
+  })).toString('base64url');
   const expiresAt = String(Date.now() + AUTH_TOKEN_TTL_MS);
   const signature = signTokenPart(subject, expiresAt);
   return `${subject}.${expiresAt}.${signature}`;
@@ -102,11 +108,48 @@ function createDataToken(username) {
 
 function validateDataToken(token) {
   const parts = String(token || '').split('.');
-  if (parts.length !== 3) return false;
+  if (parts.length !== 3) return null;
   const [subject, expiresAt, signature] = parts;
   const expiresAtMs = Number(expiresAt);
-  if (!subject || !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return false;
-  return safeEqual(signature, signTokenPart(subject, expiresAt));
+  if (!subject || !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return null;
+  if (!safeEqual(signature, signTokenPart(subject, expiresAt))) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(subject, 'base64url').toString('utf8'));
+    const username = normalizeUsername(payload.sub);
+    if (!username) return null;
+    return { username, isAdmin: username === ADMIN_USER };
+  } catch {
+    return null;
+  }
+}
+
+function coreLogin(username, password) {
+  return new Promise((resolve) => {
+    const target = new URL('/api/login', CORE_ORIGIN);
+    const payload = JSON.stringify({ username, password });
+    const upstream = (target.protocol === 'https:' ? https : http).request({
+      hostname: target.hostname,
+      port: target.port || (target.protocol === 'https:' ? 443 : 80),
+      method: 'POST',
+      path: target.pathname,
+      headers: {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(payload),
+      },
+    }, (coreRes) => {
+      let responseBody = '';
+      coreRes.setEncoding('utf8');
+      coreRes.on('data', (chunk) => { responseBody += chunk; });
+      coreRes.on('end', () => {
+        let parsed = {};
+        try { parsed = JSON.parse(responseBody || '{}'); } catch {}
+        resolve({ status: coreRes.statusCode || 0, body: parsed });
+      });
+    });
+    upstream.setTimeout(8000, () => upstream.destroy(new Error('auth_timeout')));
+    upstream.on('error', () => resolve({ status: 502, body: {} }));
+    upstream.end(payload);
+  });
 }
 
 function extractDataToken(req, url) {
@@ -152,32 +195,69 @@ async function handleLogin(req, res) {
     return;
   }
 
-  if (!credentialsAreValid(body.username, body.password)) {
+  const username = String(body.username || '').trim();
+  const password = String(body.password || '');
+  if (!username || !password) {
+    sendJson(res, 400, { ok: false, error: 'missing_credentials' });
+    return;
+  }
+
+  const result = await coreLogin(username, password);
+  if (result.status === 502) {
+    sendJson(res, 502, { ok: false, error: 'betman_core_auth_unavailable' });
+    return;
+  }
+  if (result.status < 200 || result.status >= 300 || result.body?.ok !== true) {
     sendJson(res, 401, { ok: false, error: 'invalid_username_or_password' });
     return;
   }
 
+  const authenticatedUsername = normalizeUsername(
+    result.body.user || result.body.principal?.username || username,
+  );
+
   sendJson(res, 200, {
-    access_token: createDataToken(body.username),
+    access_token: createDataToken(authenticatedUsername),
     token_type: 'bearer',
     expires_in: Math.floor(AUTH_TOKEN_TTL_MS / 1000),
+    user: authenticatedUsername,
+    role: authenticatedUsername === ADMIN_USER ? 'admin' : 'read',
   });
 }
 
 function requireDataToken(req, res, url) {
-  if (validateDataToken(extractDataToken(req, url))) return true;
+  const principal = validateDataToken(extractDataToken(req, url));
+  if (principal) return principal;
   sendJson(res, 401, { ok: false, error: 'betman_data_login_required' });
-  return false;
+  return null;
 }
 
-function proxyApi(req, res, upstreamPath) {
+function isReadOnlyApiRequest(method, upstreamPath) {
+  const verb = String(method || '').toUpperCase();
+  const pathname = String(upstreamPath || '').split('?')[0];
+  if (pathname === '/v1/admin' || pathname.startsWith('/v1/admin/')) return false;
+  if (['GET', 'HEAD', 'OPTIONS'].includes(verb)) return true;
+  return verb === 'POST' && pathname === '/v1/assistant/query';
+}
+
+function proxyAuthorizationForPrincipal(
+  principal,
+  readAuthorization = API_AUTHORIZATION,
+  adminAuthorization = API_ADMIN_AUTHORIZATION,
+) {
+  if (principal?.isAdmin && adminAuthorization) return adminAuthorization;
+  return readAuthorization;
+}
+
+function proxyApi(req, res, upstreamPath, principal) {
   const headers = {
     ...req.headers,
     host: `${API_HOST}:${API_PORT}`,
     'x-forwarded-host': req.headers.host || '',
     'x-forwarded-proto': req.socket.encrypted ? 'https' : 'http',
   };
-  if (API_AUTHORIZATION) headers.authorization = API_AUTHORIZATION;
+  const proxyAuthorization = proxyAuthorizationForPrincipal(principal);
+  if (proxyAuthorization) headers.authorization = proxyAuthorization;
   delete headers.connection;
   delete headers['proxy-connection'];
 
@@ -316,7 +396,13 @@ function handleRequest(req, res) {
 
   if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
     const upstreamPath = url.pathname.replace(/^\/api(?=\/|$)/, '') + url.search || '/';
-    if (requireDataToken(req, res, url)) proxyApi(req, res, upstreamPath);
+    const principal = requireDataToken(req, res, url);
+    if (!principal) return;
+    if (!principal.isAdmin && !isReadOnlyApiRequest(req.method, upstreamPath)) {
+      sendJson(res, 403, { ok: false, error: 'betman_data_read_only' });
+      return;
+    }
+    proxyApi(req, res, upstreamPath, principal);
     return;
   }
 
@@ -358,33 +444,43 @@ function createHttpServer() {
   return server;
 }
 
-createHttpServer().listen(PORT, HOST, () => {
-  console.log(`BETMAN Data Viewer listening on http://${HOST}:${PORT}`);
-});
+if (require.main === module) {
+  createHttpServer().listen(PORT, HOST, () => {
+    console.log(`BETMAN Data Viewer listening on http://${HOST}:${PORT}`);
+  });
 
-if (PUBLIC_PORT) {
-  if (!TLS_CERT || !TLS_KEY) {
-    console.error('BETMAN_DATA_PUBLIC_PORT is set but BETMAN_DATA_TLS_CERT/BETMAN_DATA_TLS_KEY are missing');
-    process.exitCode = 1;
-  } else {
-    const tlsOptions = {
-      cert: fs.readFileSync(TLS_CERT),
-      key: fs.readFileSync(TLS_KEY),
-    };
-    const publicServer = https.createServer(tlsOptions, handleRequest);
-    publicServer.on('upgrade', handleUpgrade);
-    publicServer.on('connection', (socket) => {
-      socket.on('error', () => {});
-    });
-    publicServer.on('secureConnection', (socket) => {
-      socket.on('error', () => {});
-    });
-    publicServer.on('tlsClientError', () => {});
-    publicServer.on('clientError', (_error, socket) => {
-      socket.destroy();
-    });
-    publicServer.listen(PUBLIC_PORT, PUBLIC_HOST || undefined, () => {
-      console.log(`BETMAN Data Viewer public listener on https://${PUBLIC_HOST || '0.0.0.0'}:${PUBLIC_PORT}`);
-    });
+  if (PUBLIC_PORT) {
+    if (!TLS_CERT || !TLS_KEY) {
+      console.error('BETMAN_DATA_PUBLIC_PORT is set but BETMAN_DATA_TLS_CERT/BETMAN_DATA_TLS_KEY are missing');
+      process.exitCode = 1;
+    } else {
+      const tlsOptions = {
+        cert: fs.readFileSync(TLS_CERT),
+        key: fs.readFileSync(TLS_KEY),
+      };
+      const publicServer = https.createServer(tlsOptions, handleRequest);
+      publicServer.on('upgrade', handleUpgrade);
+      publicServer.on('connection', (socket) => {
+        socket.on('error', () => {});
+      });
+      publicServer.on('secureConnection', (socket) => {
+        socket.on('error', () => {});
+      });
+      publicServer.on('tlsClientError', () => {});
+      publicServer.on('clientError', (_error, socket) => {
+        socket.destroy();
+      });
+      publicServer.listen(PUBLIC_PORT, PUBLIC_HOST || undefined, () => {
+        console.log(`BETMAN Data Viewer public listener on https://${PUBLIC_HOST || '0.0.0.0'}:${PUBLIC_PORT}`);
+      });
+    }
   }
 }
+
+module.exports = {
+  createDataToken,
+  validateDataToken,
+  isReadOnlyApiRequest,
+  normalizeUsername,
+  proxyAuthorizationForPrincipal,
+};
