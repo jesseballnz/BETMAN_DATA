@@ -13,6 +13,20 @@ from app.db import fetch_all, fetch_row, fetch_value
 router = APIRouter(prefix="/stats", tags=["stats"])
 
 
+async def _fetch_row_or_default(request: Request, query: str, default: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return await fetch_row(request, query) or default
+    except TimeoutError:
+        return default
+
+
+async def _fetch_value_or_default(request: Request, query: str, default: Any) -> Any:
+    try:
+        return await fetch_value(request, query) or default
+    except TimeoutError:
+        return default
+
+
 @router.get("/overview")
 async def get_stats_overview(request: Request):
     table_stats = await fetch_all(
@@ -34,7 +48,7 @@ async def get_stats_overview(request: Request):
         row["table_name"]: int(row.get("approx_rows") or 0)
         for row in table_stats
     }
-    counts = await fetch_row(
+    counts = await _fetch_row_or_default(
         request,
         """
         SELECT
@@ -43,9 +57,10 @@ async def get_stats_overview(request: Request):
             (SELECT COUNT(*)::int FROM runners) AS runners,
             (SELECT COUNT(*)::int FROM race_entries) AS entries
         """,
-    ) or {"meetings": 0, "races": 0, "runners": 0, "entries": 0}
+        {"meetings": 0, "races": 0, "runners": 0, "entries": 0},
+    )
     counts["odds_snapshots"] = approx_rows_by_table.get("odds_snapshots", 0)
-    today_counts = await fetch_row(
+    today_counts = await _fetch_row_or_default(
         request,
         """
         SELECT
@@ -68,21 +83,20 @@ async def get_stats_overview(request: Request):
                 WHERE m.meeting_date = CURRENT_DATE
             ) AS runners_today
         """,
-    ) or {"meetings_today": 0, "races_today": 0, "runners_today": 0}
-    freshness = (
-        await fetch_row(
-            request,
-            """
+        {"meetings_today": 0, "races_today": 0, "runners_today": 0},
+    )
+    freshness = await _fetch_row_or_default(
+        request,
+        """
         SELECT
             (SELECT MAX(captured_at) FROM odds_snapshots) AS latest_odds_snapshot,
             (SELECT MAX(recorded_at) FROM weather_readings) AS latest_weather_reading,
             (SELECT MAX(segment_started_at) FROM media_segments) AS latest_media_segment,
             (SELECT MAX(meeting_date) FROM meetings) AS latest_meeting_date
         """,
-        )
-        or {}
+        {},
     )
-    ingestion = await fetch_row(
+    ingestion = await _fetch_row_or_default(
         request,
         """
         SELECT
@@ -102,13 +116,12 @@ async def get_stats_overview(request: Request):
                 WHERE segment_started_at >= NOW() - INTERVAL '24 hours'
             ) AS media_segments_24h
         """,
-    ) or {"odds_snapshots_24h": 0, "weather_readings_24h": 0, "media_segments_24h": 0}
-    total_db_size = (
-        await fetch_value(
-            request,
-            "SELECT pg_database_size(current_database())",
-        )
-        or 0
+        {"odds_snapshots_24h": 0, "weather_readings_24h": 0, "media_segments_24h": 0},
+    )
+    total_db_size = await _fetch_value_or_default(
+        request,
+        "SELECT pg_database_size(current_database())",
+        0,
     )
 
     return {

@@ -1,10 +1,12 @@
+import asyncio
+
 from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.main import app
+from app.routers import stats as stats_module, tracks as tracks_module
 from app.routers.meetings import _coerce_races
 from app.routers.races import _sample_time_series
-from app.routers import tracks as tracks_module
 
 
 client = TestClient(app)
@@ -79,6 +81,24 @@ def test_data_viewer_endpoints_empty_safe():
     payload = assistant.json()
     assert "sql" in payload
     assert payload["rows"] == []
+
+
+def test_stats_overview_helpers_degrade_on_timeout(monkeypatch):
+    async def timeout_fetch_row(_request, _query):
+        raise TimeoutError
+
+    async def timeout_fetch_value(_request, _query):
+        raise TimeoutError
+
+    monkeypatch.setattr(stats_module, "fetch_row", timeout_fetch_row)
+    monkeypatch.setattr(stats_module, "fetch_value", timeout_fetch_value)
+
+    assert asyncio.run(
+        stats_module._fetch_row_or_default(None, "SELECT slow", {"ok": 0})
+    ) == {"ok": 0}
+    assert asyncio.run(
+        stats_module._fetch_value_or_default(None, "SELECT slow", 0)
+    ) == 0
 
 
 def test_meeting_races_are_normalized_from_json_string():
