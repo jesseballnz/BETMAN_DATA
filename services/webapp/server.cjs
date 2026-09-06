@@ -246,7 +246,7 @@ function proxyAuthorizationForPrincipal(
   adminAuthorization = API_ADMIN_AUTHORIZATION,
 ) {
   if (principal?.isAdmin && adminAuthorization) return adminAuthorization;
-  return readAuthorization;
+  return readAuthorization || adminAuthorization;
 }
 
 function proxyApi(req, res, upstreamPath, principal) {
@@ -302,7 +302,8 @@ function proxyApiUpgrade(req, socket, head, upstreamPath) {
     'x-forwarded-host': req.headers.host || '',
     'x-forwarded-proto': 'https',
   };
-  if (API_AUTHORIZATION) headers.authorization = API_AUTHORIZATION;
+  const proxyAuthorization = API_AUTHORIZATION || API_ADMIN_AUTHORIZATION;
+  if (proxyAuthorization) headers.authorization = proxyAuthorization;
 
   const upstream = http.request({
     hostname: API_HOST,

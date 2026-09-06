@@ -32,8 +32,9 @@ test('read-only users can query data but cannot access admin or mutation routes'
   assert.equal(isReadOnlyApiRequest('DELETE', '/v1/anything'), false);
 });
 
-test('only an admin principal can select the admin upstream credential', () => {
+test('principals select the narrowest available upstream credential', () => {
   assert.equal(proxyAuthorizationForPrincipal({ isAdmin: false }, 'read-key', 'admin-key'), 'read-key');
+  assert.equal(proxyAuthorizationForPrincipal({ isAdmin: false }, '', 'admin-key'), 'admin-key');
   assert.equal(proxyAuthorizationForPrincipal({ isAdmin: true }, 'read-key', 'admin-key'), 'admin-key');
   assert.equal(proxyAuthorizationForPrincipal({ isAdmin: true }, 'read-key', ''), 'read-key');
 });

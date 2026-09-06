@@ -29,9 +29,10 @@ Environment variables:
 - `BETMAN_DATA_ADMIN_USER` — the sole Data admin username; defaults to `betman`
 - `BETMAN_DATA_AUTH_SECRET` — HMAC secret for Data viewer sessions
 - `BETMAN_DATA_AUTH_TOKEN_TTL_MS` — session lifetime in milliseconds
+- `API_PROXY_AUTHORIZATION` — preferred read-only upstream bearer header for customer users
 - `API_ADMIN_PROXY_AUTHORIZATION` — optional admin upstream bearer header; defaults to `ADMIN_API_KEY`
 
-Every valid Core user can sign in. The configured BETMAN admin can access all proxied API routes. Other users are restricted to read routes plus `POST /v1/assistant/query`, whose database executor is read-only; admin and mutation requests return `403 betman_data_read_only`.
+Every valid Core user can sign in. The configured BETMAN admin can access all proxied API routes. Other users are restricted to read routes plus `POST /v1/assistant/query`, whose database executor is read-only; admin and mutation requests return `403 betman_data_read_only`. If a read-only upstream bearer is not configured, the native proxy falls back to the server-side admin bearer only after applying those read-only route restrictions.
 
 ## Docker / compose
 
