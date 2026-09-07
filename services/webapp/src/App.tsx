@@ -4,7 +4,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { AgGridReact } from 'ag-grid-react'
 import ReactECharts from 'echarts-for-react'
 import { Database, Gauge, KeyRound, LogOut, Map, Search, Sparkles, Users } from 'lucide-react'
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { Navigate, NavLink, Route, Routes } from 'react-router-dom'
 
 import { Button } from './components/ui/button'
 import { Card } from './components/ui/card'
@@ -16,10 +16,13 @@ import {
   api,
   buildLiveWebSocketUrl,
   clearDataToken,
+  getDataRole,
   getDataToken,
   loginWithData,
   notifyDataLoginRequired,
+  setDataRole,
   setDataToken,
+  type DataRole,
   type AssistantResponse,
   type BarrierResponse,
   type HealthResponse,
@@ -103,22 +106,25 @@ function formatSurfaceLabel(surface: string | null) {
 }
 
 function App() {
-  const [token, setToken] = useState(() => getDataToken())
+  const [session, setSession] = useState<{ token: string | null; role: DataRole | null }>(() => ({
+    token: getDataToken(),
+    role: getDataRole(),
+  }))
 
   useEffect(() => {
-    const handleLoginRequired = () => setToken(null)
+    const handleLoginRequired = () => setSession({ token: null, role: null })
     window.addEventListener(DATA_LOGIN_REQUIRED_EVENT, handleLoginRequired)
     return () => window.removeEventListener(DATA_LOGIN_REQUIRED_EVENT, handleLoginRequired)
   }, [])
 
-  if (!token) return <LoginPage onLogin={setToken} />
+  if (!session.token) return <LoginPage onLogin={(token, role) => setSession({ token, role })} />
   return <AuthenticatedApp onLogout={() => {
     clearDataToken()
-    setToken(null)
-  }} />
+    setSession({ token: null, role: null })
+  }} isAdmin={session.role === 'admin'} />
 }
 
-function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
+function AuthenticatedApp({ onLogout, isAdmin }: { onLogout: () => void; isAdmin: boolean }) {
   const { mode, setMode } = useMode()
   const queryClient = useQueryClient()
   const [hintDismissed, setHintDismissed] = useState(() => {
@@ -137,6 +143,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
     retry: false,
   })
   const liveSocket = useLiveSocket(mode, queryClient)
+  const visibleNavigation = isAdmin ? navigation : navigation.filter((item) => item.to !== '/')
 
   const dismissHint = () => {
     setHintDismissed(true)
@@ -205,7 +212,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
             </div>
             <div className="flex flex-col gap-2 lg:items-end">
               <nav className="grid gap-2 sm:grid-cols-3 lg:flex">
-                {navigation.map(({ to, label, icon: Icon }) => (
+                {visibleNavigation.map(({ to, label, icon: Icon }) => (
                   <NavLink
                     key={to}
                     to={to}
@@ -267,7 +274,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
         <main className="flex-1 pb-8">
           <Routes>
-            <Route path="/" element={<OverviewView />} />
+            <Route path="/" element={isAdmin ? <OverviewView /> : <Navigate to="/today" replace />} />
             <Route path="/today" element={<TodayView />} />
             <Route path="/signals" element={<SignalsView />} />
             <Route path="/gates" element={<GatesView />} />
@@ -283,7 +290,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   )
 }
 
-function LoginPage({ onLogin }: { onLogin: (token: string) => void }) {
+function LoginPage({ onLogin }: { onLogin: (token: string, role: DataRole) => void }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -308,7 +315,8 @@ function LoginPage({ onLogin }: { onLogin: (token: string) => void }) {
     try {
       const result = await loginWithData(username, password)
       setDataToken(result.access_token)
-      onLogin(result.access_token)
+      setDataRole(result.role)
+      onLogin(result.access_token, result.role)
     } catch {
       setError('Invalid username or password. Please try again.')
     } finally {

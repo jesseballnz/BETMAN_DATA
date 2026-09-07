@@ -1,7 +1,18 @@
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 const API_BEARER_TOKEN = import.meta.env.VITE_API_BEARER_TOKEN
 const DATA_TOKEN_KEY = 'betman_data_token'
+const DATA_ROLE_KEY = 'betman_data_role'
 export const DATA_LOGIN_REQUIRED_EVENT = 'betman-data-login-required'
+
+export type DataRole = 'admin' | 'read'
+
+export interface DataLoginResponse {
+  access_token: string
+  token_type: string
+  expires_in: number
+  user: string
+  role: DataRole
+}
 
 export const POLLING_INTERVALS = {
   stats: 15000,
@@ -350,12 +361,39 @@ export function getDataToken() {
   }
 }
 
+function roleFromToken(token: string | null): DataRole | null {
+  if (!token) return null
+  const [subject] = token.split('.')
+  if (!subject) return null
+  try {
+    const base64 = subject.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+    const payload = JSON.parse(atob(padded)) as { role?: unknown }
+    return payload.role === 'admin' ? 'admin' : 'read'
+  } catch {
+    return null
+  }
+}
+
+export function getDataRole(): DataRole | null {
+  try {
+    const role = localStorage.getItem(DATA_ROLE_KEY)
+    if (role === 'admin' || role === 'read') return role
+  } catch {}
+  return roleFromToken(getDataToken())
+}
+
 export function setDataToken(token: string) {
   localStorage.setItem(DATA_TOKEN_KEY, token)
 }
 
+export function setDataRole(role: DataRole) {
+  localStorage.setItem(DATA_ROLE_KEY, role)
+}
+
 export function clearDataToken() {
   localStorage.removeItem(DATA_TOKEN_KEY)
+  localStorage.removeItem(DATA_ROLE_KEY)
 }
 
 export async function loginWithData(username: string, password: string) {
@@ -367,7 +405,7 @@ export async function loginWithData(username: string, password: string) {
   if (!response.ok) {
     throw new Error('Invalid username or password')
   }
-  return (await response.json()) as { access_token: string; token_type: string }
+  return (await response.json()) as DataLoginResponse
 }
 
 export function buildLiveWebSocketUrl(feedId: string | number) {
