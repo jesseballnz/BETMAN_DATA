@@ -189,7 +189,7 @@ WITH runner_src AS (
     SELECT DISTINCT ON (runner->>'entrant_id')
         runner
     FROM tab_event_payloads tep
-    CROSS JOIN LATERAL jsonb_array_elements(tep.payload #> '{data,runners}') AS runner
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,runners}') = 'array' THEN tep.payload #> '{data,runners}' ELSE '[]'::jsonb END) AS runner
     WHERE runner->>'entrant_id' IS NOT NULL
     ORDER BY runner->>'entrant_id'
 )
@@ -212,7 +212,7 @@ WITH entry_src AS (
         runner
     FROM tab_event_payloads tep
     CROSS JOIN LATERAL (SELECT tep.payload #> '{data,race}' AS race) race_doc
-    CROSS JOIN LATERAL jsonb_array_elements(tep.payload #> '{data,runners}') AS runner
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,runners}') = 'array' THEN tep.payload #> '{data,runners}' ELSE '[]'::jsonb END) AS runner
     WHERE runner->>'entrant_id' IS NOT NULL
 )
 INSERT INTO race_entries (
@@ -252,7 +252,7 @@ JOIN runners run ON run.external_runner_id = entry_src.runner->>'entrant_id'
 LEFT JOIN LATERAL (
     SELECT NULLIF(res->>'position', '')::int AS finish_position
     FROM tab_event_payloads tep2
-    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(tep2.payload #> '{data,results}', '[]'::jsonb)) AS res
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep2.payload #> '{data,results}') = 'array' THEN tep2.payload #> '{data,results}' ELSE '[]'::jsonb END) AS res
     WHERE tep2.external_race_id = entry_src.external_race_id
       AND res->>'entrant_id' = entry_src.runner->>'entrant_id'
     LIMIT 1
@@ -276,7 +276,7 @@ WITH result_src AS (
         tep.external_race_id,
         res
     FROM tab_event_payloads tep
-    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(tep.payload #> '{data,results}', '[]'::jsonb)) AS res
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,results}') = 'array' THEN tep.payload #> '{data,results}' ELSE '[]'::jsonb END) AS res
 )
 INSERT INTO race_results (race_id, race_entry_id, finish_position, margin_lengths, finish_time_s)
 SELECT
@@ -421,7 +421,7 @@ WITH entry_src AS (
         runner
     FROM tab_event_payloads tep
     CROSS JOIN LATERAL (SELECT tep.payload #> '{data,race}' AS race) race_doc
-    CROSS JOIN LATERAL jsonb_array_elements(tep.payload #> '{data,runners}') AS runner
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,runners}') = 'array' THEN tep.payload #> '{data,runners}' ELSE '[]'::jsonb END) AS runner
     WHERE runner->>'entrant_id' IS NOT NULL
 )
 INSERT INTO odds_snapshots (race_id, race_entry_id, captured_at, source, win_price, place_price, win_sp, place_sp, market_status)
@@ -449,7 +449,7 @@ WITH entry_src AS (
         runner
     FROM tab_event_payloads tep
     CROSS JOIN LATERAL (SELECT tep.payload #> '{data,race}' AS race) race_doc
-    CROSS JOIN LATERAL jsonb_array_elements(tep.payload #> '{data,runners}') AS runner
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,runners}') = 'array' THEN tep.payload #> '{data,runners}' ELSE '[]'::jsonb END) AS runner
     WHERE runner->>'entrant_id' IS NOT NULL
 )
 INSERT INTO fixed_odds_ticks (race_id, race_entry_id, price, source, captured_at, time_to_jump_s)
@@ -473,7 +473,7 @@ WITH pool_src AS (
         COALESCE(NULLIF(tep.payload #>> '{data,race,actual_start}', ''), NULLIF(tep.payload #>> '{data,race,advertised_start}', '')) AS captured_epoch,
         pool
     FROM tab_event_payloads tep
-    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(tep.payload #> '{data,tote_pools}', '[]'::jsonb)) AS pool
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,tote_pools}') = 'array' THEN tep.payload #> '{data,tote_pools}' ELSE '[]'::jsonb END) AS pool
 )
 INSERT INTO tote_pools (race_id, pool_type, pool_size, captured_at, dividend)
 SELECT
@@ -496,10 +496,10 @@ WITH signal_src AS (
         COALESCE(NULLIF((money->>'bet_percentage'), '')::real, 0) AS bet_pct
     FROM tab_event_payloads tep
     CROSS JOIN LATERAL (SELECT tep.payload #> '{data,race}' AS race) race_doc
-    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(tep.payload #> '{data,money_tracker,entrants}', '[]'::jsonb)) AS money
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,money_tracker,entrants}') = 'array' THEN tep.payload #> '{data,money_tracker,entrants}' ELSE '[]'::jsonb END) AS money
     JOIN LATERAL (
         SELECT runner
-        FROM jsonb_array_elements(COALESCE(tep.payload #> '{data,runners}', '[]'::jsonb)) AS runner
+        FROM jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,runners}') = 'array' THEN tep.payload #> '{data,runners}' ELSE '[]'::jsonb END) AS runner
         WHERE runner->>'entrant_id' = money->>'entrant_id'
         LIMIT 1
     ) matched ON true
@@ -653,7 +653,7 @@ FROM tab_event_payloads tep
 JOIN races r ON r.external_race_id = tep.external_race_id
 LEFT JOIN LATERAL (
     SELECT res->>'name' AS name
-    FROM jsonb_array_elements(COALESCE(tep.payload #> '{data,results}', '[]'::jsonb)) AS res
+    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,results}') = 'array' THEN tep.payload #> '{data,results}' ELSE '[]'::jsonb END) AS res
     WHERE res->>'position' = '1'
     LIMIT 1
 ) winner ON true
