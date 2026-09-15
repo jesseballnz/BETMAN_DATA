@@ -37,7 +37,9 @@ TIMEZONE=${BETMAN_DATA_TIMEZONE:-Pacific/Auckland}
 COUNTRIES=${BETMAN_DATA_TAB_COUNTRIES:-NZ,AUS}
 WORKERS=${BETMAN_DATA_TAB_WORKERS:-8}
 RETRIES=${BETMAN_DATA_TAB_RETRIES:-2}
-LOOKBACK_DAYS=${BETMAN_DATA_TAB_LOOKBACK_DAYS:-0}
+# Always revisit yesterday so late/finalised TAB results are reconciled after
+# midnight and a transient failed poll cannot leave a permanent history gap.
+LOOKBACK_DAYS=${BETMAN_DATA_TAB_LOOKBACK_DAYS:-1}
 LOOKAHEAD_DAYS=${BETMAN_DATA_TAB_LOOKAHEAD_DAYS:-1}
 
 date_offset() {
