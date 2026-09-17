@@ -34,6 +34,7 @@ from app.routers import (
     meetings,
     metrics,
     pedigree,
+    race_day,
     races,
     runners,
     search,
@@ -69,18 +70,36 @@ async def _startup_schema_check(pool: object) -> None:
     """
     required: dict[str, list[str]] = {
         "tenant_usage": [
-            "tenant_id", "endpoint", "method", "status_code", "duration_ms", "captured_at",
+            "tenant_id",
+            "endpoint",
+            "method",
+            "status_code",
+            "duration_ms",
+            "captured_at",
         ],
         "audit_log": [
-            "tenant_id", "actor", "action", "resource", "payload_json", "ip_address", "created_at",
+            "tenant_id",
+            "actor",
+            "action",
+            "resource",
+            "payload_json",
+            "ip_address",
+            "created_at",
         ],
         "tenant_api_keys": [
-            "tenant_id", "key_hash", "key_prefix", "is_admin", "active",
-            "scopes", "requests_per_minute", "daily_quota",
+            "tenant_id",
+            "key_hash",
+            "key_prefix",
+            "is_admin",
+            "active",
+            "scopes",
+            "requests_per_minute",
+            "daily_quota",
         ],
     }
     try:
         import asyncpg  # type: ignore[import]
+
         async with pool.acquire() as conn:  # type: ignore[union-attr]
             rows = await conn.fetch(
                 """
@@ -158,6 +177,7 @@ app.include_router(stats.router, prefix=PREFIX)
 app.include_router(meetings.router, prefix=PREFIX)
 app.include_router(feeds.router, prefix=PREFIX)
 app.include_router(races.router, prefix=PREFIX)
+app.include_router(race_day.router, prefix=PREFIX)
 app.include_router(runners.router, prefix=PREFIX)
 app.include_router(tracks.router, prefix=PREFIX)
 app.include_router(events.router, prefix=PREFIX)

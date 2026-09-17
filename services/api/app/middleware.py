@@ -85,7 +85,15 @@ class TenantMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        if request.url.path in _PUBLIC_PATHS or request.url.path.startswith("/docs"):
+        # Race Day authenticates the signed-in BETMAN Core operator itself.
+        # It must not require or expose the internal BETMAN Data API key in a
+        # browser. Every route under this prefix applies the exact-subject gate.
+        if (
+            request.url.path in _PUBLIC_PATHS
+            or request.url.path.startswith("/docs")
+            or request.url.path == "/v1/race-day"
+            or request.url.path.startswith("/v1/race-day/")
+        ):
             return await call_next(request)
 
         auth = request.headers.get("Authorization", "")

@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     admin_api_key: str = ""
     platform_master_key: str = ""
     metrics_public: bool = False
+    core_auth_base_url: str = "http://127.0.0.1:18081"
+    core_auth_verify_ssl: bool = False
+    heatmap_storage_path: str = "/opt/betman-heatmap/storage/meetings"
 
     # CORS
     cors_origins: str = "http://localhost:5173,http://localhost:8080"
