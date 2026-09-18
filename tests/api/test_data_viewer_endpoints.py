@@ -201,6 +201,7 @@ def test_track_heatmap_derives_cells_from_barrier_outcomes(monkeypatch):
     assert response.json()["cells"] == [
         {
             "zone": "inside",
+            "distance_band": None,
             "distance_from_finish_band": "sprint",
             "win_rate": 12.5,
             "place_rate": 37.5,
