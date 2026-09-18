@@ -26,12 +26,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_smart_money_signal_natural
 CREATE TEMP TABLE tab_event_import_raw (line TEXT);
 \copy tab_event_import_raw(line) FROM '__TAB_EVENT_JSONL__' WITH (FORMAT csv, DELIMITER E'\x03', QUOTE E'\x01', ESCAPE E'\x02')
 
-INSERT INTO tab_event_payloads (source, external_race_id, country, race_date, payload)
+INSERT INTO tab_event_payloads (source, external_race_id, country, race_date, fetched_at, payload)
 SELECT
     'tab_affiliate',
     payload #>> '{data,race,event_id}',
     payload #>> '{data,race,country}',
     NULLIF(payload #>> '{data,race,race_date_nz}', '')::date,
+    COALESCE(NULLIF(payload->>'_betman_fetched_at', '')::timestamptz, now()),
     payload
 FROM (
     SELECT line::jsonb AS payload
@@ -44,7 +45,21 @@ ON CONFLICT (external_race_id) DO UPDATE
 SET country = EXCLUDED.country,
     race_date = EXCLUDED.race_date,
     payload = EXCLUDED.payload,
-    fetched_at = now();
+    fetched_at = EXCLUDED.fetched_at;
+
+-- Every materialisation below is scoped to this poll's payloads. Previously
+-- the loader replayed the entire retained payload history on every cycle,
+-- multiplying identical odds/tote rows and repeatedly locking horse_scores.
+CREATE TEMP TABLE tab_event_import_ids AS
+SELECT DISTINCT line::jsonb #>> '{data,race,event_id}' AS external_race_id
+FROM tab_event_import_raw
+WHERE NULLIF(line, '') IS NOT NULL
+  AND line::jsonb #>> '{data,race,event_id}' IS NOT NULL;
+CREATE UNIQUE INDEX ON tab_event_import_ids (external_race_id);
+CREATE TEMP VIEW tab_event_payloads_current AS
+SELECT tep.*
+FROM tab_event_payloads tep
+JOIN tab_event_import_ids imported USING (external_race_id);
 
 DELETE FROM tab_event_payloads
 WHERE payload #>> '{data,race,type}' IS DISTINCT FROM 'T';
@@ -71,7 +86,7 @@ FROM (
             ELSE 50
         END AS rank,
         NULLIF(payload #>> '{data,race,description}', '') AS description
-    FROM tab_event_payloads
+    FROM tab_event_payloads_current
     WHERE payload #>> '{data,race,event_id}' IS NOT NULL
 ) classes
 ORDER BY code, description NULLS LAST
@@ -82,7 +97,7 @@ SET "group" = EXCLUDED."group",
 
 WITH race_src AS (
     SELECT payload #> '{data,race}' AS race
-    FROM tab_event_payloads
+    FROM tab_event_payloads_current
 )
 INSERT INTO meetings (external_meeting_id, track_name, meeting_date, surface, jurisdiction, status)
 SELECT DISTINCT ON (race->>'meeting_id')
@@ -114,7 +129,7 @@ SET track_name = EXCLUDED.track_name,
 
 WITH race_src AS (
     SELECT payload #> '{data,race}' AS race
-    FROM tab_event_payloads
+    FROM tab_event_payloads_current
 )
 INSERT INTO races (
     meeting_id,
@@ -188,7 +203,7 @@ SET meeting_id = EXCLUDED.meeting_id,
 WITH runner_src AS (
     SELECT DISTINCT ON (runner->>'entrant_id')
         runner
-    FROM tab_event_payloads tep
+    FROM tab_event_payloads_current tep
     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,runners}') = 'array' THEN tep.payload #> '{data,runners}' ELSE '[]'::jsonb END) AS runner
     WHERE runner->>'entrant_id' IS NOT NULL
     ORDER BY runner->>'entrant_id'
@@ -206,11 +221,41 @@ SET name = EXCLUDED.name,
     type = EXCLUDED.type,
     country_of_origin = EXCLUDED.country_of_origin;
 
+WITH runner_src AS (
+    SELECT DISTINCT ON (runner->>'entrant_id')
+        runner
+    FROM tab_event_payloads_current tep
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,runners}') = 'array' THEN tep.payload #> '{data,runners}' ELSE '[]'::jsonb END) AS runner
+    WHERE runner->>'entrant_id' IS NOT NULL
+    ORDER BY runner->>'entrant_id'
+)
+INSERT INTO pedigrees (runner_id, sire, dam, damsire, colour, provider_name, updated_at)
+SELECT
+    run.id,
+    NULLIF(runner_src.runner->>'sire', ''),
+    NULLIF(runner_src.runner->>'dam', ''),
+    NULLIF(runner_src.runner->>'dam_sire', ''),
+    NULLIF(runner_src.runner->>'colour', ''),
+    'tab_affiliate',
+    now()
+FROM runner_src
+JOIN runners run ON run.external_runner_id = runner_src.runner->>'entrant_id'
+WHERE NULLIF(runner_src.runner->>'sire', '') IS NOT NULL
+   OR NULLIF(runner_src.runner->>'dam', '') IS NOT NULL
+   OR NULLIF(runner_src.runner->>'dam_sire', '') IS NOT NULL
+ON CONFLICT (runner_id) DO UPDATE
+SET sire = COALESCE(EXCLUDED.sire, pedigrees.sire),
+    dam = COALESCE(EXCLUDED.dam, pedigrees.dam),
+    damsire = COALESCE(EXCLUDED.damsire, pedigrees.damsire),
+    colour = COALESCE(EXCLUDED.colour, pedigrees.colour),
+    provider_name = EXCLUDED.provider_name,
+    updated_at = EXCLUDED.updated_at;
+
 WITH entry_src AS (
     SELECT
         race->>'event_id' AS external_race_id,
         runner
-    FROM tab_event_payloads tep
+    FROM tab_event_payloads_current tep
     CROSS JOIN LATERAL (SELECT tep.payload #> '{data,race}' AS race) race_doc
     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,runners}') = 'array' THEN tep.payload #> '{data,runners}' ELSE '[]'::jsonb END) AS runner
     WHERE runner->>'entrant_id' IS NOT NULL
@@ -251,7 +296,7 @@ JOIN races r ON r.external_race_id = entry_src.external_race_id
 JOIN runners run ON run.external_runner_id = entry_src.runner->>'entrant_id'
 LEFT JOIN LATERAL (
     SELECT NULLIF(res->>'position', '')::int AS finish_position
-    FROM tab_event_payloads tep2
+    FROM tab_event_payloads_current tep2
     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep2.payload #> '{data,results}') = 'array' THEN tep2.payload #> '{data,results}' ELSE '[]'::jsonb END) AS res
     WHERE tep2.external_race_id = entry_src.external_race_id
       AND res->>'entrant_id' = entry_src.runner->>'entrant_id'
@@ -275,7 +320,7 @@ WITH result_src AS (
     SELECT
         tep.external_race_id,
         res
-    FROM tab_event_payloads tep
+    FROM tab_event_payloads_current tep
     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,results}') = 'array' THEN tep.payload #> '{data,results}' ELSE '[]'::jsonb END) AS res
 )
 INSERT INTO race_results (race_id, race_entry_id, finish_position, margin_lengths, finish_time_s)
@@ -295,6 +340,81 @@ SET finish_position = EXCLUDED.finish_position,
     margin_lengths = EXCLUDED.margin_lengths,
     finish_time_s = EXCLUDED.finish_time_s;
 
+WITH source_rows AS (
+    SELECT
+        r.id AS race_id,
+        r.meeting_id,
+        tep.fetched_at,
+        NULLIF(trim(tep.payload #>> '{data,race,track_condition}'), '') AS condition_code,
+        NULLIF(trim(tep.payload #>> '{data,race,weather}'), '') AS weather
+    FROM tab_event_payloads_current tep
+    JOIN races r ON r.external_race_id = tep.external_race_id
+)
+INSERT INTO track_condition_readings (
+    meeting_id, race_id, condition_code, condition_category, recorded_at, source, notes
+)
+SELECT
+    meeting_id,
+    race_id,
+    condition_code,
+    CASE
+        WHEN lower(condition_code) ~ 'heavy' THEN 'heavy'
+        WHEN lower(condition_code) ~ 'soft|slow' THEN 'soft'
+        WHEN lower(condition_code) ~ 'good' THEN 'good'
+        WHEN lower(condition_code) ~ 'firm|fast' THEN 'firm'
+        WHEN lower(condition_code) ~ 'synthetic|poly|tapeta|awt' THEN 'synthetic'
+        ELSE 'unknown'
+    END,
+    fetched_at,
+    'tab_affiliate',
+    CASE WHEN weather IS NULL THEN NULL ELSE 'Official race weather: ' || weather END
+FROM source_rows
+WHERE condition_code IS NOT NULL
+ON CONFLICT (meeting_id, (COALESCE(race_id, 0)), condition_code, source)
+    WHERE source = 'tab_affiliate'
+DO UPDATE SET
+    condition_category = EXCLUDED.condition_category,
+    recorded_at = EXCLUDED.recorded_at,
+    notes = EXCLUDED.notes;
+
+WITH counts AS (
+    SELECT
+        r.id AS race_id,
+        r.status AS current_status,
+        lower(COALESCE(tep.payload #>> '{data,race,status}', '')) AS source_status,
+        COUNT(re.id) FILTER (WHERE NOT re.scratched)::int AS expected_entries,
+        COUNT(rr.id) FILTER (WHERE COALESCE(rr.result_quality, 'verified') = 'verified')::int AS valid_result_rows,
+        COUNT(rr.id) FILTER (WHERE COALESCE(rr.result_quality, 'verified') <> 'verified')::int AS invalid_result_rows
+    FROM tab_event_payloads_current tep
+    JOIN races r ON r.external_race_id = tep.external_race_id
+    LEFT JOIN race_entries re ON re.race_id = r.id
+    LEFT JOIN race_results rr ON rr.race_entry_id = re.id
+    GROUP BY r.id, r.status, tep.payload
+)
+INSERT INTO race_data_quality (
+    race_id, observed_at, current_status, source_status, expected_entries,
+    valid_result_rows, invalid_result_rows, issue_code, details
+)
+SELECT
+    race_id, now(), current_status, source_status, expected_entries,
+    valid_result_rows, invalid_result_rows,
+    CASE
+        WHEN invalid_result_rows > 0 THEN 'invalid_result_rows'
+        WHEN source_status IN ('final', 'closed') AND valid_result_rows < expected_entries THEN 'partial_results'
+        ELSE 'ok'
+    END,
+    jsonb_build_object('complete_result_set', expected_entries > 0 AND valid_result_rows = expected_entries)
+FROM counts
+ON CONFLICT (race_id) DO UPDATE SET
+    observed_at = EXCLUDED.observed_at,
+    current_status = EXCLUDED.current_status,
+    source_status = EXCLUDED.source_status,
+    expected_entries = EXCLUDED.expected_entries,
+    valid_result_rows = EXCLUDED.valid_result_rows,
+    invalid_result_rows = EXCLUDED.invalid_result_rows,
+    issue_code = EXCLUDED.issue_code,
+    details = EXCLUDED.details;
+
 WITH eligible_entries AS (
     SELECT
         re.id AS race_entry_id,
@@ -311,6 +431,7 @@ WITH eligible_entries AS (
         COUNT(*) OVER (PARTITION BY re.race_id) AS field_size
     FROM race_entries re
     JOIN races r ON r.id = re.race_id
+    JOIN tab_event_import_ids imported ON imported.external_race_id = r.external_race_id
     JOIN meetings m ON m.id = r.meeting_id
     WHERE re.scratched = false
       AND re.barrier_number IS NOT NULL
@@ -417,9 +538,9 @@ SET barrier_number = EXCLUDED.barrier_number,
 WITH entry_src AS (
     SELECT
         race->>'event_id' AS external_race_id,
-        COALESCE(NULLIF(race->>'actual_start', ''), NULLIF(race->>'advertised_start', '')) AS captured_epoch,
+        tep.fetched_at AS captured_at,
         runner
-    FROM tab_event_payloads tep
+    FROM tab_event_payloads_current tep
     CROSS JOIN LATERAL (SELECT tep.payload #> '{data,race}' AS race) race_doc
     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,runners}') = 'array' THEN tep.payload #> '{data,runners}' ELSE '[]'::jsonb END) AS runner
     WHERE runner->>'entrant_id' IS NOT NULL
@@ -428,7 +549,7 @@ INSERT INTO odds_snapshots (race_id, race_entry_id, captured_at, source, win_pri
 SELECT
     r.id,
     re.id,
-    CASE WHEN entry_src.captured_epoch IS NULL OR entry_src.captured_epoch = '0' THEN COALESCE(r.actual_start_time, r.scheduled_start_time, now()) ELSE to_timestamp(entry_src.captured_epoch::double precision) END,
+    entry_src.captured_at,
     'tab_affiliate_event',
     NULLIF(entry_src.runner #>> '{odds,fixed_win}', '')::numeric,
     NULLIF(entry_src.runner #>> '{odds,fixed_place}', '')::numeric,
@@ -445,9 +566,9 @@ ON CONFLICT DO NOTHING;
 WITH entry_src AS (
     SELECT
         race->>'event_id' AS external_race_id,
-        COALESCE(NULLIF(race->>'actual_start', ''), NULLIF(race->>'advertised_start', '')) AS captured_epoch,
+        tep.fetched_at AS captured_at,
         runner
-    FROM tab_event_payloads tep
+    FROM tab_event_payloads_current tep
     CROSS JOIN LATERAL (SELECT tep.payload #> '{data,race}' AS race) race_doc
     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,runners}') = 'array' THEN tep.payload #> '{data,runners}' ELSE '[]'::jsonb END) AS runner
     WHERE runner->>'entrant_id' IS NOT NULL
@@ -458,8 +579,8 @@ SELECT
     re.id,
     NULLIF(entry_src.runner #>> '{odds,fixed_win}', '')::numeric,
     'tab_affiliate_event',
-    CASE WHEN entry_src.captured_epoch IS NULL OR entry_src.captured_epoch = '0' THEN COALESCE(r.actual_start_time, r.scheduled_start_time, now()) ELSE to_timestamp(entry_src.captured_epoch::double precision) END,
-    CASE WHEN r.scheduled_start_time IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM (r.scheduled_start_time - COALESCE(r.actual_start_time, r.scheduled_start_time)))::int END
+    entry_src.captured_at,
+    CASE WHEN r.scheduled_start_time IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM (r.scheduled_start_time - entry_src.captured_at))::int END
 FROM entry_src
 JOIN races r ON r.external_race_id = entry_src.external_race_id
 JOIN runners run ON run.external_runner_id = entry_src.runner->>'entrant_id'
@@ -467,12 +588,134 @@ JOIN race_entries re ON re.race_id = r.id AND re.runner_id = run.id
 WHERE NULLIF(entry_src.runner #>> '{odds,fixed_win}', '') IS NOT NULL
 ON CONFLICT DO NOTHING;
 
+-- TAB supplies real timestamped fluctuations. Persist those timestamps rather
+-- than assigning scheduled jump time to every observation.
+WITH fluc_src AS (
+    SELECT
+        race->>'event_id' AS external_race_id,
+        runner->>'entrant_id' AS external_runner_id,
+        fluc
+    FROM tab_event_payloads_current tep
+    CROSS JOIN LATERAL (SELECT tep.payload #> '{data,race}' AS race) race_doc
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,runners}') = 'array' THEN tep.payload #> '{data,runners}' ELSE '[]'::jsonb END) AS runner
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(runner #> '{flucs_with_timestamp,last_six}') = 'array' THEN runner #> '{flucs_with_timestamp,last_six}' ELSE '[]'::jsonb END) AS fluc
+    WHERE runner->>'entrant_id' IS NOT NULL
+      AND NULLIF(fluc->>'fluc', '') IS NOT NULL
+      AND NULLIF(fluc->>'timestamp', '') IS NOT NULL
+      AND fluc->>'timestamp' NOT LIKE '0001-%'
+)
+INSERT INTO fixed_odds_ticks (race_id, race_entry_id, price, source, captured_at, time_to_jump_s)
+SELECT
+    r.id,
+    re.id,
+    (fluc_src.fluc->>'fluc')::numeric,
+    'tab_affiliate_fluc',
+    (fluc_src.fluc->>'timestamp')::timestamptz,
+    CASE WHEN r.scheduled_start_time IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM (r.scheduled_start_time - (fluc_src.fluc->>'timestamp')::timestamptz))::int END
+FROM fluc_src
+JOIN races r ON r.external_race_id = fluc_src.external_race_id
+JOIN runners run ON run.external_runner_id = fluc_src.external_runner_id
+JOIN race_entries re ON re.race_id = r.id AND re.runner_id = run.id
+WHERE (fluc_src.fluc->>'fluc')::numeric > 0
+ON CONFLICT DO NOTHING;
+
+WITH ordered AS (
+    SELECT
+        fot.race_id,
+        fot.race_entry_id,
+        fot.captured_at,
+        fot.time_to_jump_s,
+        fot.price,
+        LAG(fot.price) OVER (PARTITION BY fot.race_entry_id ORDER BY fot.captured_at, fot.id) AS previous_price
+    FROM fixed_odds_ticks fot
+    JOIN races r ON r.id = fot.race_id
+    JOIN tab_event_import_ids imported ON imported.external_race_id = r.external_race_id
+    WHERE fot.source IN ('tab_affiliate_event', 'tab_affiliate_fluc')
+), movements AS (
+    SELECT *, ((price - previous_price) / NULLIF(previous_price, 0) * 100.0)::real AS movement_pct
+    FROM ordered
+    WHERE previous_price IS NOT NULL AND price IS DISTINCT FROM previous_price
+)
+INSERT INTO odds_movements (
+    race_id, race_entry_id, detected_at, time_to_jump_s,
+    from_price, to_price, movement_pct, movement_type, source
+)
+SELECT
+    race_id, race_entry_id, captured_at, time_to_jump_s,
+    previous_price, price, movement_pct,
+    CASE WHEN price < previous_price THEN 'firming' ELSE 'drifting' END,
+    'tab_affiliate'
+FROM movements
+ON CONFLICT DO NOTHING;
+
+WITH stats AS (
+    SELECT
+        fot.race_id,
+        fot.race_entry_id,
+        (array_agg(fot.price ORDER BY fot.captured_at, fot.id))[1] AS opening_price,
+        (array_agg(fot.price ORDER BY fot.captured_at DESC, fot.id DESC))[1] AS closing_price,
+        MIN(fot.price) AS min_price,
+        MAX(fot.price) AS max_price,
+        COUNT(*)::int AS snapshot_count
+    FROM fixed_odds_ticks fot
+    JOIN races r ON r.id = fot.race_id
+    JOIN tab_event_import_ids imported ON imported.external_race_id = r.external_race_id
+    WHERE fot.source IN ('tab_affiliate_event', 'tab_affiliate_fluc')
+    GROUP BY fot.race_id, fot.race_entry_id
+), movement_counts AS (
+    SELECT race_entry_id,
+           COUNT(*) FILTER (WHERE movement_type = 'firming')::int AS firmings,
+           COUNT(*) FILTER (WHERE movement_type = 'drifting')::int AS driftings,
+           MAX(ABS(movement_pct)) AS biggest_move_pct
+    FROM odds_movements
+    WHERE source = 'tab_affiliate'
+    GROUP BY race_entry_id
+)
+INSERT INTO odds_analytics (
+    race_id, race_entry_id, opening_price, closing_price, min_price, max_price,
+    price_range, total_movement_pct, firmings_count, driftings_count,
+    steam_detected, blowout_detected, biggest_move_pct, biggest_move_type,
+    snapshot_count, updated_at
+)
+SELECT
+    s.race_id, s.race_entry_id, s.opening_price, s.closing_price, s.min_price, s.max_price,
+    (s.max_price - s.min_price)::real,
+    ((s.closing_price - s.opening_price) / NULLIF(s.opening_price, 0) * 100.0)::real,
+    COALESCE(mc.firmings, 0), COALESCE(mc.driftings, 0),
+    s.closing_price <= s.opening_price * 0.8,
+    s.closing_price >= s.opening_price * 1.25,
+    mc.biggest_move_pct,
+    CASE
+        WHEN mc.biggest_move_pct IS NULL THEN NULL
+        WHEN s.closing_price < s.opening_price THEN 'firming'
+        ELSE 'drifting'
+    END,
+    s.snapshot_count,
+    now()
+FROM stats s
+LEFT JOIN movement_counts mc USING (race_entry_id)
+ON CONFLICT (race_entry_id) DO UPDATE SET
+    opening_price = EXCLUDED.opening_price,
+    closing_price = EXCLUDED.closing_price,
+    min_price = EXCLUDED.min_price,
+    max_price = EXCLUDED.max_price,
+    price_range = EXCLUDED.price_range,
+    total_movement_pct = EXCLUDED.total_movement_pct,
+    firmings_count = EXCLUDED.firmings_count,
+    driftings_count = EXCLUDED.driftings_count,
+    steam_detected = EXCLUDED.steam_detected,
+    blowout_detected = EXCLUDED.blowout_detected,
+    biggest_move_pct = EXCLUDED.biggest_move_pct,
+    biggest_move_type = EXCLUDED.biggest_move_type,
+    snapshot_count = EXCLUDED.snapshot_count,
+    updated_at = EXCLUDED.updated_at;
+
 WITH pool_src AS (
     SELECT
         tep.external_race_id,
-        COALESCE(NULLIF(tep.payload #>> '{data,race,actual_start}', ''), NULLIF(tep.payload #>> '{data,race,advertised_start}', '')) AS captured_epoch,
+        tep.fetched_at AS captured_at,
         pool
-    FROM tab_event_payloads tep
+    FROM tab_event_payloads_current tep
     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,tote_pools}') = 'array' THEN tep.payload #> '{data,tote_pools}' ELSE '[]'::jsonb END) AS pool
 )
 INSERT INTO tote_pools (race_id, pool_type, pool_size, captured_at, dividend)
@@ -480,7 +723,7 @@ SELECT
     r.id,
     lower(regexp_replace(pool_src.pool->>'product_type', '\s+', '_', 'g')),
     NULLIF(pool_src.pool->>'total', '')::numeric,
-    CASE WHEN pool_src.captured_epoch IS NULL OR pool_src.captured_epoch = '0' THEN COALESCE(r.actual_start_time, r.scheduled_start_time, now()) ELSE to_timestamp(pool_src.captured_epoch::double precision) END,
+    pool_src.captured_at,
     NULL
 FROM pool_src
 JOIN races r ON r.external_race_id = pool_src.external_race_id
@@ -490,11 +733,12 @@ ON CONFLICT DO NOTHING;
 WITH signal_src AS (
     SELECT
         tep.external_race_id,
+        tep.fetched_at AS captured_at,
         race,
         runner,
         COALESCE(NULLIF((money->>'hold_percentage'), '')::real, 0) AS hold_pct,
         COALESCE(NULLIF((money->>'bet_percentage'), '')::real, 0) AS bet_pct
-    FROM tab_event_payloads tep
+    FROM tab_event_payloads_current tep
     CROSS JOIN LATERAL (SELECT tep.payload #> '{data,race}' AS race) race_doc
     CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(tep.payload #> '{data,money_tracker,entrants}') = 'array' THEN tep.payload #> '{data,money_tracker,entrants}' ELSE '[]'::jsonb END) AS money
     JOIN LATERAL (
@@ -517,15 +761,15 @@ SELECT
     re.id,
     CASE WHEN ranked.bet_pct >= ranked.hold_pct THEN 'late_money' ELSE 'smart_money' END,
     LEAST(1.0, GREATEST(ranked.hold_pct, ranked.bet_pct) / 100.0),
-    COALESCE(r.actual_start_time, r.scheduled_start_time, now()),
-    NULL,
+    ranked.captured_at,
+    CASE WHEN r.scheduled_start_time IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM (r.scheduled_start_time - ranked.captured_at))::int END,
     jsonb_build_object('source', 'tab_money_tracker', 'hold_percentage', ranked.hold_pct, 'bet_percentage', ranked.bet_pct)
 FROM ranked
 JOIN races r ON r.external_race_id = ranked.external_race_id
 JOIN runners run ON run.external_runner_id = ranked.runner->>'entrant_id'
 JOIN race_entries re ON re.race_id = r.id AND re.runner_id = run.id
 WHERE GREATEST(ranked.hold_pct, ranked.bet_pct) >= 5
-  AND COALESCE(r.actual_start_time, r.scheduled_start_time, now()) >= current_date - interval '7 days'
+  AND ranked.captured_at >= current_date - interval '7 days'
 ON CONFLICT DO NOTHING;
 
 WITH recent_smart_signals AS (
@@ -572,6 +816,7 @@ WITH score_src AS (
         re.gear_changes_json
     FROM race_entries re
     JOIN races r ON r.id = re.race_id
+    JOIN tab_event_import_ids imported ON imported.external_race_id = r.external_race_id
     JOIN runners run ON run.id = re.runner_id
     LEFT JOIN LATERAL (
         SELECT win_price
@@ -649,7 +894,7 @@ SELECT
     NULL,
     'tab_affiliate_import',
     now()
-FROM tab_event_payloads tep
+FROM tab_event_payloads_current tep
 JOIN races r ON r.external_race_id = tep.external_race_id
 LEFT JOIN LATERAL (
     SELECT res->>'name' AS name

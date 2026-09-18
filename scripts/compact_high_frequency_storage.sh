@@ -7,7 +7,6 @@ PSQL_USER=${BETMAN_DATA_PSQL_USER:-postgres}
 LOCK_FILE=${BETMAN_DATA_COMPACT_LOCK:-/run/betman-data-storage-compact.lock}
 MIN_TABLE_BYTES=${BETMAN_DATA_COMPACT_MIN_TABLE_BYTES:-536870912}
 EMERGENCY_FREE_PCT=${BETMAN_DATA_COMPACT_EMERGENCY_FREE_PCT:-10}
-ALLOW_EMERGENCY_TRUNCATE=${BETMAN_DATA_COMPACT_ALLOW_EMERGENCY_TRUNCATE:-0}
 
 TABLES=(
   odds_snapshots
@@ -44,21 +43,8 @@ echo "Emergency free-space floor: ${EMERGENCY_FREE_PCT}%"
 free_pct=$(root_free_pct)
 echo "Root filesystem free: ${free_pct}%"
 
-if [[ "${ALLOW_EMERGENCY_TRUNCATE}" =~ ^(1|true|yes|on)$ ]] && (( free_pct < EMERGENCY_FREE_PCT )); then
-  echo "Root filesystem below emergency floor; resetting regenerated high-frequency fact tables."
-  psql_cmd -X -P pager=off -v ON_ERROR_STOP=1 <<'SQL'
-SET lock_timeout = 10000;
-TRUNCATE TABLE odds_snapshots, fixed_odds_ticks, market_signals, tote_pools, smart_money_indicators;
-ANALYZE odds_snapshots;
-ANALYZE fixed_odds_ticks;
-ANALYZE market_signals;
-ANALYZE tote_pools;
-ANALYZE smart_money_indicators;
-CHECKPOINT;
-SQL
-  df -h /
-  echo "BETMAN_DATA emergency compaction finished at $(date -Is)"
-  exit 0
+if (( free_pct < EMERGENCY_FREE_PCT )); then
+  echo "Root filesystem is below the free-space floor; using in-place VACUUM only." >&2
 fi
 
 mapfile -t candidates < <(
@@ -104,8 +90,8 @@ for table in "${candidates[@]}"; do
     exit 1
   fi
 
-  echo "VACUUM FULL ${table}"
-  psql_cmd -X -P pager=off -v ON_ERROR_STOP=1 -c "VACUUM (FULL, ANALYZE) ${table};"
+  echo "VACUUM ANALYZE ${table}"
+  psql_cmd -X -P pager=off -v ON_ERROR_STOP=1 -c "VACUUM (ANALYZE) ${table};"
 done
 
 psql_cmd -X -P pager=off -v ON_ERROR_STOP=1 <<'SQL'

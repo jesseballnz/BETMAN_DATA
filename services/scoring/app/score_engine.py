@@ -59,13 +59,30 @@ class ScoreEngine:
             raise RuntimeError("score engine pool is not initialized")
         race_ids = await self._pool.fetch(
             """
-            SELECT id FROM races
-            WHERE status IN ('scheduled', 'running')
-              AND scheduled_start_time BETWEEN now() - interval '30 minutes'
-                                            AND now() + interval '48 hours'
+            SELECT id FROM races r
+            WHERE (
+                r.status IN ('scheduled', 'running')
+                AND r.scheduled_start_time BETWEEN now() - interval '30 minutes'
+                                                  AND now() + interval '48 hours'
+            ) OR (
+                r.status = 'finished'
+                AND r.scheduled_start_time >= now() - interval '7 days'
+                AND EXISTS (
+                    SELECT 1
+                    FROM race_entries re
+                    WHERE re.race_id = r.id
+                      AND NOT re.scratched
+                      AND NOT EXISTS (
+                          SELECT 1 FROM race_analysis_features raf
+                          WHERE raf.race_entry_id = re.id
+                            AND raf.feature_version = $1
+                      )
+                )
+            )
             ORDER BY scheduled_start_time, id
-            LIMIT 200
-            """
+            LIMIT 400
+            """,
+            FEATURE_VERSION,
         )
         for row in race_ids:
             await self._score_race(row["id"])
@@ -189,7 +206,17 @@ class ScoreEngine:
                         INSERT INTO race_prediction_snapshots (
                             race_id, race_entry_id, generated_at, model_version,
                             probability, fair_odds, market_price, edge, stake_fraction
-                        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                        )
+                        SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9
+                        WHERE NOT EXISTS (
+                            SELECT 1
+                            FROM race_prediction_snapshots previous
+                            WHERE previous.race_entry_id = $2
+                              AND previous.model_version = $4
+                              AND previous.generated_at >= $3::timestamptz - interval '5 minutes'
+                              AND previous.market_price IS NOT DISTINCT FROM $7
+                              AND ABS(previous.probability - $5) < 0.0001
+                        )
                         """,
                         race_id, row["race_entry_id"], calculated_at, MODEL_VERSION,
                         probability, fair_odds, price, edge, stake,

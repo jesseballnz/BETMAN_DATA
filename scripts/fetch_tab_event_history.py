@@ -14,7 +14,7 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start", required=True, help="Start date, YYYY-MM-DD")
     parser.add_argument("--end", required=True, help="End date, YYYY-MM-DD")
-    parser.add_argument("--countries", default="NZ,AUS", help="Comma-separated country codes")
+    parser.add_argument("--countries", default="NZ,AUS,HK", help="Comma-separated country codes")
     parser.add_argument("--type", default="T", help="TAB racing type filter")
     parser.add_argument("--race-types", default="T", help="Comma-separated event payload race types to write")
     parser.add_argument("--out", required=True, help="Output JSONL path")
@@ -154,6 +154,9 @@ def main() -> int:
                 race_type = (((payload.get("data") or {}).get("race") or {}).get("type") or "").upper()
                 if allowed_race_types and race_type not in allowed_race_types:
                     continue
+                # Persist the source-capture time inside the auditable JSONL so
+                # a retry of the same file cannot manufacture a new market tick.
+                payload["_betman_fetched_at"] = datetime.now(timezone.utc).isoformat()
                 fh.write(json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n")
                 written += 1
                 if written % 250 == 0:

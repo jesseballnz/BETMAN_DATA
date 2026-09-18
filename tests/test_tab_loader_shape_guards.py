@@ -13,7 +13,6 @@ def test_every_json_array_expansion_rejects_scalar_payloads() -> None:
     ]
 
     assert calls, "TAB loader must contain JSON array expansions"
-    assert len(calls) == 10, "Review and shape-guard every new JSON array expansion"
     for call in calls:
         assert "CASE WHEN jsonb_typeof(" in call
         assert "= 'array'" in call

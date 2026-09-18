@@ -1,0 +1,44 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+LOADER = (ROOT / "scripts" / "load_tab_event_payloads.sql").read_text(encoding="utf-8")
+FETCHER = (ROOT / "scripts" / "fetch_tab_event_history.py").read_text(encoding="utf-8")
+MIGRATION = (ROOT / "infra" / "migrations" / "012_ingestion_idempotency.sql").read_text(
+    encoding="utf-8"
+)
+
+
+def test_fetch_timestamp_is_auditable_and_replay_stable() -> None:
+    assert 'payload["_betman_fetched_at"]' in FETCHER
+    assert "EXCLUDED.fetched_at" in LOADER
+    assert "tep.fetched_at AS captured_at" in LOADER
+
+
+def test_loader_only_materialises_current_import() -> None:
+    assert "CREATE TEMP VIEW tab_event_payloads_current" in LOADER
+    assert "JOIN tab_event_import_ids imported" in LOADER
+    assert "JOIN tab_event_import_ids imported ON imported.external_race_id = r.external_race_id" in LOADER
+
+
+def test_available_tab_intelligence_is_materialised() -> None:
+    for relation in (
+        "pedigrees",
+        "track_condition_readings",
+        "race_data_quality",
+        "odds_movements",
+        "odds_analytics",
+    ):
+        assert f"INSERT INTO {relation}" in LOADER
+    assert "flucs_with_timestamp,last_six" in LOADER
+
+
+def test_market_tables_have_replay_guards() -> None:
+    for index_name in (
+        "ux_odds_snapshots_capture",
+        "ux_fixed_odds_ticks_capture",
+        "ux_tote_pools_capture",
+        "ux_market_signals_capture",
+        "ux_odds_movements_capture",
+    ):
+        assert index_name in MIGRATION

@@ -1,0 +1,14 @@
+[Unit]
+Description=BETMAN Data live ingestion completeness check
+After=postgresql.service betman-data-tab-poller.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/betman/betman_data
+Environment=BETMAN_DATA_DB=betman_data
+Environment=BETMAN_DATA_PSQL_USER=postgres
+ExecStart=/opt/betman/betman_data/scripts/check_ingestion_health.sh
+User=root
+Group=root
+StandardOutput=append:/var/log/betman/betman-data-ingestion-health.log
+StandardError=append:/var/log/betman/betman-data-ingestion-health.log

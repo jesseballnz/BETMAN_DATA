@@ -1,5 +1,5 @@
 [Unit]
-Description=BETMAN Data high-frequency storage compaction
+Description=BETMAN Data safe high-frequency maintenance
 After=network-online.target postgresql.service betman-data-retention-prune.service
 Wants=network-online.target
 
@@ -11,7 +11,6 @@ Environment=BETMAN_DATA_DB=betman_data
 Environment=BETMAN_DATA_PSQL_USER=postgres
 Environment=BETMAN_DATA_COMPACT_MIN_TABLE_BYTES=536870912
 Environment=BETMAN_DATA_COMPACT_EMERGENCY_FREE_PCT=10
-Environment=BETMAN_DATA_COMPACT_ALLOW_EMERGENCY_TRUNCATE=1
 ExecStartPre=-/usr/bin/systemctl stop betman-data-tab-poller.timer
 ExecStartPre=/bin/bash -lc 'while systemctl is-active --quiet betman-data-tab-poller.service; do sleep 5; done'
 ExecStart=/opt/betman/betman_data/scripts/compact_high_frequency_storage.sh

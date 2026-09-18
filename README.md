@@ -176,7 +176,7 @@ systemctl enable --now betman-data-retention-prune.timer
 systemctl enable --now betman-data-storage-compact.timer
 ```
 
-`betman-data-retention-prune.timer` rolls old high-frequency odds, tote, and signal rows into daily summaries before deleting them. `betman-data-storage-compact.timer` runs nightly and reclaims PostgreSQL table files with `VACUUM FULL`; if root disk free space falls below the configured emergency floor, it resets only regenerated high-frequency fact tables while preserving race/runner/result tables and daily summaries.
+`betman-data-retention-prune.timer` rolls old high-frequency odds, tote, and signal rows into daily summaries before deleting them. `betman-data-storage-compact.timer` runs safe in-place `VACUUM (ANALYZE)` maintenance. It never uses `VACUUM FULL` or emergency truncation; storage alerts and an explicitly reviewed retention change are required before destructive reclamation.
 
 ## Documentation
 

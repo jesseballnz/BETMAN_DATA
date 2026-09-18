@@ -34,7 +34,7 @@ if [[ -f "${ENV_FILE}" ]]; then
 fi
 
 TIMEZONE=${BETMAN_DATA_TIMEZONE:-Pacific/Auckland}
-COUNTRIES=${BETMAN_DATA_TAB_COUNTRIES:-NZ,AUS}
+COUNTRIES=${BETMAN_DATA_TAB_COUNTRIES:-NZ,AUS,HK}
 WORKERS=${BETMAN_DATA_TAB_WORKERS:-8}
 RETRIES=${BETMAN_DATA_TAB_RETRIES:-2}
 # Always revisit yesterday so late/finalised TAB results are reconciled after
