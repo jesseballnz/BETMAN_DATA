@@ -24,7 +24,7 @@ jobs:
       - name: Install API test dependencies
         run: pip install -e "services/api[dev]"
       - name: Ruff
-        run: python -m ruff check services/ libs/
+        run: python -m ruff check --config ruff.toml services/ libs/
       - name: Pytest
         run: python -m pytest tests -q
 

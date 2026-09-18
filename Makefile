@@ -91,13 +91,13 @@ test-consumer: ## Run Consumer service tests only
 
 # ── Linting and Formatting ────────────────────────────────────────────────────
 lint: ## Run ruff linter across all services
-	python -m ruff check services/ libs/
+	python -m ruff check --config ruff.toml services/ libs/
 
 format: ## Auto-format all Python code with ruff
 	python -m ruff format services/ libs/
 
 security-check: ## Run quick security hygiene checks
-	python -m ruff check services/ libs/
+	python -m ruff check --config ruff.toml services/ libs/
 	! git grep -nE '(AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|BEGIN (RSA|EC|OPENSSH) PRIVATE KEY)' -- . ':(exclude)services/webapp/node_modules'
 
 # ── Status ────────────────────────────────────────────────────────────────────

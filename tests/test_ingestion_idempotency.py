@@ -7,6 +7,9 @@ FETCHER = (ROOT / "scripts" / "fetch_tab_event_history.py").read_text(encoding="
 MIGRATION = (ROOT / "infra" / "migrations" / "012_ingestion_idempotency.sql").read_text(
     encoding="utf-8"
 )
+BOTTLENECK_MIGRATION = (
+    ROOT / "infra" / "migrations" / "006_production_bottleneck_indexes.sql"
+).read_text(encoding="utf-8")
 
 
 def test_fetch_timestamp_is_auditable_and_replay_stable() -> None:
@@ -42,3 +45,9 @@ def test_market_tables_have_replay_guards() -> None:
         "ux_odds_movements_capture",
     ):
         assert index_name in MIGRATION
+
+
+def test_clean_install_bootstraps_tab_payload_cache_before_indexes() -> None:
+    create_at = BOTTLENECK_MIGRATION.index("CREATE TABLE IF NOT EXISTS tab_event_payloads")
+    index_at = BOTTLENECK_MIGRATION.index("idx_tab_event_payloads_race_date_country")
+    assert create_at < index_at

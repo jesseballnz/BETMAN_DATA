@@ -3,6 +3,18 @@
 -- Production bottleneck indexes for hot BETMAN Data read paths.
 -- Use CONCURRENTLY because these tables are live ingestion targets.
 
+-- The TAB payload cache originally pre-dated the numbered migrations and was
+-- created directly on long-lived hosts. Bootstrap it here so a clean install
+-- and disaster-recovery rebuild have the same schema as Production.
+CREATE TABLE IF NOT EXISTS tab_event_payloads (
+    source text NOT NULL,
+    external_race_id text PRIMARY KEY,
+    country text,
+    race_date date,
+    fetched_at timestamptz NOT NULL DEFAULT now(),
+    payload jsonb NOT NULL
+);
+
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_track_conditions_race_recorded
     ON track_condition_readings (race_id, recorded_at DESC)
     WHERE race_id IS NOT NULL;

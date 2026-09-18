@@ -1,0 +1,24 @@
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP"]
+# The API contains long SQL and structured prompt literals whose wrapping
+# would reduce readability without improving correctness.
+ignore = ["E501"]
+
+# Existing compatibility/import debt is explicitly baselined by file. New
+# files and all other rule classes remain enforced in CI.
+[lint.per-file-ignores]
+"libs/schemas/schemas/__init__.py" = ["I001"]
+"libs/schemas/schemas/normalized.py" = ["I001", "UP006", "UP035", "UP045"]
+"services/api/app/routers/stats.py" = ["UP017"]
+"services/consumer/app/main.py" = ["I001"]
+"services/consumer/app/pedigree_adapter.py" = ["I001"]
+"services/consumer/app/providers/loveracing.py" = ["I001", "UP006", "UP035"]
+"services/consumer/app/providers/racing_victoria.py" = ["I001", "UP006", "UP035"]
+"services/consumer/app/race_adapter.py" = ["I001"]
+"services/consumer/scripts/backfill.py" = ["I001"]
+"services/discovery/app/discovery_engine.py" = ["I001", "UP017"]
+"services/discovery/app/main.py" = ["I001"]
+"services/scoring/app/score_engine.py" = ["UP017", "UP041"]
