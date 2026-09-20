@@ -36,6 +36,17 @@ def test_available_tab_intelligence_is_materialised() -> None:
     assert "flucs_with_timestamp,last_six" in LOADER
 
 
+def test_non_positive_market_prices_are_rejected() -> None:
+    assert "NULLIF(entry_src.runner #>> '{odds,fixed_win}', '')::numeric > 0" in LOADER
+    assert "WHEN NULLIF(entry_src.runner #>> '{odds,fixed_place}', '')::numeric > 0" in LOADER
+    assert "previous_price > 0" in LOADER
+    assert "AND price > 0" in LOADER
+
+
+def test_loader_serializes_horse_score_writes() -> None:
+    assert "pg_advisory_xact_lock(hashtext('betman_horse_scores_writer'))" in LOADER
+
+
 def test_market_tables_have_replay_guards() -> None:
     for index_name in (
         "ux_odds_snapshots_capture",

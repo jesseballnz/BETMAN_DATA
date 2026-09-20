@@ -551,16 +551,20 @@ SELECT
     re.id,
     entry_src.captured_at,
     'tab_affiliate_event',
-    NULLIF(entry_src.runner #>> '{odds,fixed_win}', '')::numeric,
-    NULLIF(entry_src.runner #>> '{odds,fixed_place}', '')::numeric,
-    NULLIF(entry_src.runner #>> '{odds,fixed_win}', '')::numeric,
-    NULLIF(entry_src.runner #>> '{odds,fixed_place}', '')::numeric,
+    CASE WHEN NULLIF(entry_src.runner #>> '{odds,fixed_win}', '')::numeric > 0
+        THEN NULLIF(entry_src.runner #>> '{odds,fixed_win}', '')::numeric END,
+    CASE WHEN NULLIF(entry_src.runner #>> '{odds,fixed_place}', '')::numeric > 0
+        THEN NULLIF(entry_src.runner #>> '{odds,fixed_place}', '')::numeric END,
+    CASE WHEN NULLIF(entry_src.runner #>> '{odds,fixed_win}', '')::numeric > 0
+        THEN NULLIF(entry_src.runner #>> '{odds,fixed_win}', '')::numeric END,
+    CASE WHEN NULLIF(entry_src.runner #>> '{odds,fixed_place}', '')::numeric > 0
+        THEN NULLIF(entry_src.runner #>> '{odds,fixed_place}', '')::numeric END,
     r.status
 FROM entry_src
 JOIN races r ON r.external_race_id = entry_src.external_race_id
 JOIN runners run ON run.external_runner_id = entry_src.runner->>'entrant_id'
 JOIN race_entries re ON re.race_id = r.id AND re.runner_id = run.id
-WHERE NULLIF(entry_src.runner #>> '{odds,fixed_win}', '') IS NOT NULL
+WHERE NULLIF(entry_src.runner #>> '{odds,fixed_win}', '')::numeric > 0
 ON CONFLICT DO NOTHING;
 
 WITH entry_src AS (
@@ -585,7 +589,7 @@ FROM entry_src
 JOIN races r ON r.external_race_id = entry_src.external_race_id
 JOIN runners run ON run.external_runner_id = entry_src.runner->>'entrant_id'
 JOIN race_entries re ON re.race_id = r.id AND re.runner_id = run.id
-WHERE NULLIF(entry_src.runner #>> '{odds,fixed_win}', '') IS NOT NULL
+WHERE NULLIF(entry_src.runner #>> '{odds,fixed_win}', '')::numeric > 0
 ON CONFLICT DO NOTHING;
 
 -- TAB supplies real timestamped fluctuations. Persist those timestamps rather
@@ -631,10 +635,13 @@ WITH ordered AS (
     JOIN races r ON r.id = fot.race_id
     JOIN tab_event_import_ids imported ON imported.external_race_id = r.external_race_id
     WHERE fot.source IN ('tab_affiliate_event', 'tab_affiliate_fluc')
+      AND fot.price > 0
 ), movements AS (
     SELECT *, ((price - previous_price) / NULLIF(previous_price, 0) * 100.0)::real AS movement_pct
     FROM ordered
-    WHERE previous_price IS NOT NULL AND price IS DISTINCT FROM previous_price
+    WHERE previous_price > 0
+      AND price > 0
+      AND price IS DISTINCT FROM previous_price
 )
 INSERT INTO odds_movements (
     race_id, race_entry_id, detected_at, time_to_jump_s,
@@ -661,6 +668,7 @@ WITH stats AS (
     JOIN races r ON r.id = fot.race_id
     JOIN tab_event_import_ids imported ON imported.external_race_id = r.external_race_id
     WHERE fot.source IN ('tab_affiliate_event', 'tab_affiliate_fluc')
+      AND fot.price > 0
     GROUP BY fot.race_id, fot.race_entry_id
 ), movement_counts AS (
     SELECT race_entry_id,
@@ -803,6 +811,9 @@ WHERE NOT EXISTS (
 ON CONFLICT (race_id, race_entry_id, indicator_type, detected_at) DO UPDATE
 SET confidence = GREATEST(smart_money_indicators.confidence, EXCLUDED.confidence);
 
+BEGIN;
+SELECT pg_advisory_xact_lock(hashtext('betman_horse_scores_writer'));
+
 WITH score_src AS (
     SELECT
         r.id AS race_id,
@@ -822,7 +833,7 @@ WITH score_src AS (
         SELECT win_price
         FROM odds_snapshots os
         WHERE os.race_entry_id = re.id
-          AND win_price IS NOT NULL
+          AND win_price > 0
         ORDER BY captured_at DESC
         LIMIT 1
     ) os ON true
@@ -884,6 +895,8 @@ SET bc_score = EXCLUDED.bc_score,
     betman_probability = EXCLUDED.betman_probability,
     calculated_at = EXCLUDED.calculated_at,
     model_version = EXCLUDED.model_version;
+
+COMMIT;
 
 INSERT INTO race_summaries (race_id, summary_text, key_moments, winner_name, margin_description, model_version, generated_at)
 SELECT

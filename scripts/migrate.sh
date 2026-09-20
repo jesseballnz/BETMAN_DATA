@@ -64,5 +64,6 @@ psql -f "${MIGRATION_DIR}/009_result_integrity.sql"
 psql -f "${MIGRATION_DIR}/010_race_analysis_features.sql"
 psql -f "${MIGRATION_DIR}/011_heatmap_race_day.sql"
 psql -f "${MIGRATION_DIR}/012_ingestion_idempotency.sql"
+psql -f "${MIGRATION_DIR}/013_ingestion_runtime_integrity.sql"
 
 echo "All migrations applied successfully."

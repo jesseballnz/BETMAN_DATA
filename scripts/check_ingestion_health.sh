@@ -15,11 +15,13 @@ fi
 
 disk_used_pct=$(df -P / | awk 'NR == 2 {gsub("%", "", $5); print $5}')
 poller_result=$(systemctl show betman-data-tab-poller.service -p Result --value 2>/dev/null || true)
+poller_result=${poller_result:-unknown}
 
 healthy=$("${PSQL[@]}" -X -At -P pager=off -v ON_ERROR_STOP=1 \
   -v max_freshness_seconds="${MAX_FRESHNESS_SECONDS}" \
   -v max_disk_used_pct="${MAX_DISK_USED_PCT}" \
   -v disk_used_pct="${disk_used_pct}" \
+  -v poller_result="${poller_result}" \
   -v min_feature_coverage="${MIN_UPCOMING_FEATURE_COVERAGE}" <<'SQL'
 WITH freshness AS (
     SELECT COALESCE(EXTRACT(EPOCH FROM (now() - MAX(fetched_at)))::int, 2147483647) AS seconds
@@ -68,16 +70,18 @@ WITH freshness AS (
         (cov.pedigree_ratio >= 0.95) AS pedigrees_ok,
         (cov.recent_conditions > 0) AS conditions_ok,
         (cov.recent_odds_analytics > 0) AS analytics_ok,
+        (:'poller_result' = 'success') AS poller_ok,
         (:disk_used_pct::int <= :max_disk_used_pct::int) AS disk_ok
     FROM freshness f CROSS JOIN countries c CROSS JOIN coverage cov
 ), inserted AS (
     INSERT INTO ingestion_health_snapshots (
-        checked_at, healthy, payload_freshness_seconds, countries, coverage, storage, failures
+        checked_at, healthy, payload_freshness_seconds, countries, coverage, storage,
+        poller_result, failures
     )
     SELECT
         now(),
         freshness_ok AND nz_ok AND aus_ok AND hk_ok AND features_ok
-            AND pedigrees_ok AND conditions_ok AND analytics_ok AND disk_ok,
+            AND pedigrees_ok AND conditions_ok AND analytics_ok AND poller_ok AND disk_ok,
         seconds,
         countries,
         jsonb_build_object(
@@ -91,6 +95,7 @@ WITH freshness AS (
             'recent_odds_movements', recent_odds_movements
         ),
         jsonb_build_object('disk_used_pct', :disk_used_pct::int),
+        :'poller_result',
         to_jsonb(array_remove(ARRAY[
             CASE WHEN NOT freshness_ok THEN 'payload_stale' END,
             CASE WHEN NOT nz_ok THEN 'nz_missing' END,
@@ -100,6 +105,7 @@ WITH freshness AS (
             CASE WHEN NOT pedigrees_ok THEN 'pedigrees_incomplete' END,
             CASE WHEN NOT conditions_ok THEN 'track_conditions_stale' END,
             CASE WHEN NOT analytics_ok THEN 'odds_analytics_stale' END,
+            CASE WHEN NOT poller_ok THEN 'poller_failed' END,
             CASE WHEN NOT disk_ok THEN 'disk_pressure' END
         ], NULL))
     FROM checks
@@ -109,7 +115,7 @@ SELECT healthy FROM inserted;
 SQL
 )
 
-echo "ingestion_health healthy=${healthy} disk_used_pct=${disk_used_pct} poller_result=${poller_result:-unknown} checked_at=$(date -Is)"
-if [[ "${healthy}" != "t" || "${poller_result}" != "success" ]]; then
+echo "ingestion_health healthy=${healthy} disk_used_pct=${disk_used_pct} poller_result=${poller_result} checked_at=$(date -Is)"
+if [[ "${healthy}" != "t" ]]; then
   exit 1
 fi

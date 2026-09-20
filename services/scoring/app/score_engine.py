@@ -109,6 +109,7 @@ class ScoreEngine:
                 SELECT price::float AS price
                 FROM fixed_odds_ticks
                 WHERE race_entry_id = re.id
+                  AND price > 0
                   AND captured_at <= COALESCE(r.scheduled_start_time, now())
                 ORDER BY captured_at DESC LIMIT 1
             ) odds ON true
@@ -162,6 +163,12 @@ class ScoreEngine:
 
         async with self._pool.acquire() as conn:
             async with conn.transaction():
+                # The TAB loader also derives horse_scores. A shared transaction
+                # advisory lock serializes both writers without blocking readers
+                # or pausing the rest of ingestion.
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('betman_horse_scores_writer'))"
+                )
                 for item, probability in zip(feature_rows, probabilities):
                     row = item["row"]
                     price = float(row["price"]) if row["price"] is not None else None
