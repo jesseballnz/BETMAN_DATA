@@ -24,4 +24,5 @@ def test_loader_persists_tab_horse_id() -> None:
 def test_runner_fit_joins_history_by_stable_horse_id() -> None:
     source = (ROOT / "services/api/app/routers/races.py").read_text()
     assert source.count("hru.external_horse_id = ru.external_horse_id") == 3
-    assert source.count("ru.external_horse_id IS NULL AND hre.runner_id = current_entry.runner_id") == 3
+    assert source.count("ru.external_horse_id IS NOT NULL") == 3
+    assert "ru.external_horse_id IS NULL AND hre.runner_id = current_entry.runner_id" not in source
