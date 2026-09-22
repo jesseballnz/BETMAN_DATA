@@ -19,7 +19,7 @@ def test_fetch_timestamp_is_auditable_and_replay_stable() -> None:
 
 
 def test_loader_only_materialises_current_import() -> None:
-    assert "CREATE TEMP VIEW tab_event_payloads_current" in LOADER
+    assert "CREATE TEMP TABLE tab_event_payloads_current" in LOADER
     assert "JOIN tab_event_import_ids imported" in LOADER
     assert "JOIN tab_event_import_ids imported ON imported.external_race_id = r.external_race_id" in LOADER
 
