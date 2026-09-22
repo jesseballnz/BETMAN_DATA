@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date as date_type
 from datetime import datetime
 from enum import StrEnum
@@ -12,6 +13,15 @@ from app.db import fetch_all, fetch_row
 
 router = APIRouter(prefix="/races", tags=["races"])
 MAX_ODDS_SNAPSHOTS_PER_ENTRY = 320
+
+
+def _coerce_runner_fit_row(row: dict[str, Any]) -> dict[str, Any]:
+    item = dict(row)
+    for key in ("track", "distance", "condition"):
+        value = item.get(key)
+        if isinstance(value, str):
+            item[key] = json.loads(value)
+    return item
 
 
 def _parse_date_param(value: str | None) -> date_type | None:
@@ -392,7 +402,7 @@ async def get_external_runner_fit(request: Request, external_race_id: str):
         """,
         race["id"],
     )
-    return {"race_id": race["id"], "runner_fit": [dict(row) for row in rows]}
+    return {"race_id": race["id"], "runner_fit": [_coerce_runner_fit_row(row) for row in rows]}
 
 
 @router.get("/{race_id}", summary="Get race detail")
