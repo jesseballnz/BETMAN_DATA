@@ -244,16 +244,18 @@ WITH runner_src AS (
     WHERE runner->>'entrant_id' IS NOT NULL
     ORDER BY runner->>'entrant_id'
 )
-INSERT INTO runners (external_runner_id, name, type, country_of_origin)
+INSERT INTO runners (external_runner_id, external_horse_id, name, type, country_of_origin)
 SELECT
     runner->>'entrant_id',
+    NULLIF(runner->>'horse_id', ''),
     runner->>'name',
     'thoroughbred',
     NULLIF(runner->>'country', '')
 FROM runner_src
 WHERE runner->>'name' IS NOT NULL
 ON CONFLICT (external_runner_id) WHERE external_runner_id IS NOT NULL DO UPDATE
-SET name = EXCLUDED.name,
+SET external_horse_id = COALESCE(EXCLUDED.external_horse_id, runners.external_horse_id),
+    name = EXCLUDED.name,
     type = EXCLUDED.type,
     country_of_origin = EXCLUDED.country_of_origin;
 

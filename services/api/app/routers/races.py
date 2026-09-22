@@ -355,28 +355,37 @@ async def get_external_runner_fit(request: Request, external_race_id: str):
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::int AS starts, COUNT(*) FILTER (WHERE rr.finish_position = 1)::int AS wins,
                    COUNT(*) FILTER (WHERE rr.finish_position = 2)::int AS seconds, COUNT(*) FILTER (WHERE rr.finish_position = 3)::int AS thirds
-            FROM race_entries hre JOIN races hr ON hr.id = hre.race_id JOIN meetings hm ON hm.id = hr.meeting_id
+            FROM race_entries hre JOIN runners hru ON hru.id = hre.runner_id
+            JOIN races hr ON hr.id = hre.race_id JOIN meetings hm ON hm.id = hr.meeting_id
             JOIN race_results rr ON rr.race_entry_id = hre.id
-            WHERE hre.runner_id = current_entry.runner_id AND hr.id <> t.id AND NOT hre.scratched
+            WHERE ((ru.external_horse_id IS NOT NULL AND hru.external_horse_id = ru.external_horse_id)
+                   OR (ru.external_horse_id IS NULL AND hre.runner_id = current_entry.runner_id))
+              AND hr.id <> t.id AND NOT hre.scratched
               AND rr.result_quality = 'verified' AND LOWER(hm.track_name) = LOWER(t.track_name)
         ) track ON true
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::int AS starts, COUNT(*) FILTER (WHERE rr.finish_position = 1)::int AS wins,
                    COUNT(*) FILTER (WHERE rr.finish_position = 2)::int AS seconds, COUNT(*) FILTER (WHERE rr.finish_position = 3)::int AS thirds
-            FROM race_entries hre JOIN races hr ON hr.id = hre.race_id
+            FROM race_entries hre JOIN runners hru ON hru.id = hre.runner_id
+            JOIN races hr ON hr.id = hre.race_id
             JOIN race_results rr ON rr.race_entry_id = hre.id
-            WHERE hre.runner_id = current_entry.runner_id AND hr.id <> t.id AND NOT hre.scratched
+            WHERE ((ru.external_horse_id IS NOT NULL AND hru.external_horse_id = ru.external_horse_id)
+                   OR (ru.external_horse_id IS NULL AND hre.runner_id = current_entry.runner_id))
+              AND hr.id <> t.id AND NOT hre.scratched
               AND rr.result_quality = 'verified' AND hr.distance_m = t.distance_m
         ) distance ON true
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::int AS starts, COUNT(*) FILTER (WHERE rr.finish_position = 1)::int AS wins,
                    COUNT(*) FILTER (WHERE rr.finish_position = 2)::int AS seconds, COUNT(*) FILTER (WHERE rr.finish_position = 3)::int AS thirds
-            FROM race_entries hre JOIN races hr ON hr.id = hre.race_id
+            FROM race_entries hre JOIN runners hru ON hru.id = hre.runner_id
+            JOIN races hr ON hr.id = hre.race_id
             JOIN race_results rr ON rr.race_entry_id = hre.id
             LEFT JOIN LATERAL (SELECT condition_category FROM track_condition_readings tcr
                                WHERE tcr.race_id = hr.id OR (tcr.race_id IS NULL AND tcr.meeting_id = hr.meeting_id)
                                ORDER BY (tcr.race_id = hr.id) DESC, recorded_at DESC LIMIT 1) hc ON true
-            WHERE hre.runner_id = current_entry.runner_id AND hr.id <> t.id AND NOT hre.scratched
+            WHERE ((ru.external_horse_id IS NOT NULL AND hru.external_horse_id = ru.external_horse_id)
+                   OR (ru.external_horse_id IS NULL AND hre.runner_id = current_entry.runner_id))
+              AND hr.id <> t.id AND NOT hre.scratched
               AND rr.result_quality = 'verified' AND COALESCE(hc.condition_category, 'unknown') = t.condition_category
         ) condition ON true
         ORDER BY current_entry.barrier_number NULLS LAST, ru.name
