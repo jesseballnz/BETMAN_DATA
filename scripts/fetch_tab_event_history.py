@@ -36,6 +36,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start", required=True, help="Start date, YYYY-MM-DD")
     parser.add_argument("--end", required=True, help="End date, YYYY-MM-DD")
+    parser.add_argument(
+        "--reconcile-targets",
+        help="Optional TSV of event_id, country, race_date for exact historical rechecks",
+    )
     parser.add_argument("--countries", default="NZ,AUS,HK", help="Comma-separated country codes")
     parser.add_argument("--type", default="T", help="TAB racing type filter")
     parser.add_argument("--race-types", default="T", help="Comma-separated event payload race types to write")
@@ -88,8 +92,10 @@ def get_json(path: str, params: dict[str, Any], retries: int) -> dict[str, Any]:
     raise RuntimeError(f"GET failed after retries: {url}: {last_error}")
 
 
-def list_events_for_day(day: date, country: str, race_type: str, limit: int, retries: int) -> list[str]:
-    event_ids: list[str] = []
+def list_events_for_day(
+    day: date, country: str, race_type: str, limit: int, retries: int
+) -> list[dict[str, str]]:
+    events: list[dict[str, str]] = []
     offset = 0
     while True:
         payload = get_json(
@@ -109,11 +115,31 @@ def list_events_for_day(day: date, country: str, race_type: str, limit: int, ret
             for race in meeting.get("races") or []:
                 event_id = race.get("id")
                 if event_id:
-                    event_ids.append(event_id)
+                    events.append(
+                        {
+                            "event_id": str(event_id),
+                            "status": str(race.get("status") or ""),
+                        }
+                    )
         if len(meetings) < limit:
             break
         offset += limit
-    return event_ids
+    return events
+
+
+def load_reconcile_targets(path: str | None) -> list[tuple[str, str, date]]:
+    if not path:
+        return []
+    targets: list[tuple[str, str, date]] = []
+    for number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) != 3:
+            raise ValueError(f"invalid reconcile target on line {number}")
+        event_id, country, race_date = parts
+        targets.append((event_id, country.upper(), datetime.strptime(race_date, "%Y-%m-%d").date()))
+    return targets
 
 
 def fetch_event(event_id: str, retries: int) -> dict[str, Any]:
@@ -130,11 +156,29 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     event_ids: list[str] = []
+    listing_statuses: dict[str, str] = {}
     for day in daterange(start, end):
         for country in countries:
-            ids = list_events_for_day(day, country, args.type, args.limit, args.retries)
-            event_ids.extend(ids)
-            print(f"{day} {country}: {len(ids)} races", file=sys.stderr, flush=True)
+            events = list_events_for_day(day, country, args.type, args.limit, args.retries)
+            for event in events:
+                event_ids.append(event["event_id"])
+                listing_statuses[event["event_id"]] = event["status"]
+            print(f"{day} {country}: {len(events)} races", file=sys.stderr, flush=True)
+
+    targets = load_reconcile_targets(args.reconcile_targets)
+    target_groups = sorted({(country, race_date) for _, country, race_date in targets})
+    target_ids = {event_id for event_id, _, _ in targets}
+    for country, race_date in target_groups:
+        events = list_events_for_day(race_date, country, args.type, args.limit, args.retries)
+        for event in events:
+            if event["event_id"] in target_ids:
+                listing_statuses[event["event_id"]] = event["status"]
+        print(
+            f"reconcile {race_date} {country}: {len(events)} listed races",
+            file=sys.stderr,
+            flush=True,
+        )
+    event_ids.extend(event_id for event_id, _, _ in targets)
 
     seen: set[str] = set()
     unique_ids = [event_id for event_id in event_ids if not (event_id in seen or seen.add(event_id))]
@@ -149,14 +193,35 @@ def main() -> int:
                 try:
                     payload = future.result()
                 except Exception as exc:
-                    print(f"ERROR {event_id}: {exc}", file=sys.stderr, flush=True)
-                    continue
+                    listing_status = listing_statuses.get(event_id, "")
+                    if listing_status.lower() != "abandoned":
+                        print(f"ERROR {event_id}: {exc}", file=sys.stderr, flush=True)
+                        continue
+                    # TAB can remove an abandoned event-detail document while
+                    # retaining its authoritative status in the meeting list.
+                    # Emit a status-only envelope; the loader merges it with
+                    # the last retained full source payload instead of erasing it.
+                    payload = {
+                        "_betman_status_only": True,
+                        "data": {"race": {"event_id": event_id, "type": "T"}},
+                    }
+                    print(
+                        f"Using listing-only abandoned status for {event_id}: {exc}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 race_type = (((payload.get("data") or {}).get("race") or {}).get("type") or "").upper()
                 if allowed_race_types and race_type not in allowed_race_types:
                     continue
                 # Persist the source-capture time inside the auditable JSONL so
                 # a retry of the same file cannot manufacture a new market tick.
                 payload["_betman_fetched_at"] = datetime.now(timezone.utc).isoformat()
+                listing_status = listing_statuses.get(event_id)
+                if listing_status:
+                    # The meetings listing is authoritative for cancellations.
+                    # Some event-detail payloads remain incorrectly Open after
+                    # the whole card has been abandoned.
+                    payload["_betman_listing_race_status"] = listing_status
                 fh.write(json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n")
                 written += 1
                 if written % 250 == 0:

@@ -26,6 +26,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_smart_money_signal_natural
 CREATE TEMP TABLE tab_event_import_raw (line TEXT);
 \copy tab_event_import_raw(line) FROM '__TAB_EVENT_JSONL__' WITH (FORMAT csv, DELIMITER E'\x03', QUOTE E'\x01', ESCAPE E'\x02')
 
+CREATE TEMP TABLE tab_event_import_parsed AS
+SELECT line::jsonb AS payload
+FROM tab_event_import_raw
+WHERE NULLIF(line, '') IS NOT NULL;
+
+CREATE TEMP TABLE tab_event_status_overrides AS
+SELECT DISTINCT ON (payload #>> '{data,race,event_id}')
+    payload #>> '{data,race,event_id}' AS external_race_id,
+    payload->>'_betman_listing_race_status' AS listing_status
+FROM tab_event_import_parsed
+WHERE payload #>> '{data,race,event_id}' IS NOT NULL
+  AND NULLIF(payload->>'_betman_listing_race_status', '') IS NOT NULL
+ORDER BY payload #>> '{data,race,event_id}';
+CREATE UNIQUE INDEX ON tab_event_status_overrides (external_race_id);
+
 INSERT INTO tab_event_payloads (source, external_race_id, country, race_date, fetched_at, payload)
 SELECT
     'tab_affiliate',
@@ -34,13 +49,10 @@ SELECT
     NULLIF(payload #>> '{data,race,race_date_nz}', '')::date,
     COALESCE(NULLIF(payload->>'_betman_fetched_at', '')::timestamptz, now()),
     payload
-FROM (
-    SELECT line::jsonb AS payload
-    FROM tab_event_import_raw
-    WHERE NULLIF(line, '') IS NOT NULL
-) src
+FROM tab_event_import_parsed src
 WHERE payload #>> '{data,race,event_id}' IS NOT NULL
   AND payload #>> '{data,race,type}' = 'T'
+  AND COALESCE((payload->>'_betman_status_only')::boolean, false) = false
 ON CONFLICT (external_race_id) DO UPDATE
 SET country = EXCLUDED.country,
     race_date = EXCLUDED.race_date,
@@ -56,10 +68,20 @@ FROM tab_event_import_raw
 WHERE NULLIF(line, '') IS NOT NULL
   AND line::jsonb #>> '{data,race,event_id}' IS NOT NULL;
 CREATE UNIQUE INDEX ON tab_event_import_ids (external_race_id);
-CREATE TEMP VIEW tab_event_payloads_current AS
-SELECT tep.*
+CREATE TEMP TABLE tab_event_payloads_current AS
+SELECT
+    tep.source,
+    tep.external_race_id,
+    tep.country,
+    tep.race_date,
+    tep.fetched_at,
+    tep.payload || CASE WHEN o.listing_status IS NOT NULL
+        THEN jsonb_build_object('_betman_listing_race_status', o.listing_status)
+        ELSE '{}'::jsonb END AS payload
 FROM tab_event_payloads tep
-JOIN tab_event_import_ids imported USING (external_race_id);
+JOIN tab_event_import_ids imported USING (external_race_id)
+LEFT JOIN tab_event_status_overrides o USING (external_race_id);
+CREATE UNIQUE INDEX ON tab_event_payloads_current (external_race_id);
 
 DELETE FROM tab_event_payloads
 WHERE payload #>> '{data,race,type}' IS DISTINCT FROM 'T';
@@ -96,7 +118,10 @@ SET "group" = EXCLUDED."group",
     description = COALESCE(EXCLUDED.description, race_classes.description);
 
 WITH race_src AS (
-    SELECT payload #> '{data,race}' AS race
+    SELECT (payload #> '{data,race}') ||
+        CASE WHEN NULLIF(payload->>'_betman_listing_race_status', '') IS NOT NULL
+            THEN jsonb_build_object('status', payload->>'_betman_listing_race_status')
+            ELSE '{}'::jsonb END AS race
     FROM tab_event_payloads_current
 )
 INSERT INTO meetings (external_meeting_id, track_name, meeting_date, surface, jurisdiction, status)
@@ -125,10 +150,17 @@ SET track_name = EXCLUDED.track_name,
     meeting_date = EXCLUDED.meeting_date,
     surface = EXCLUDED.surface,
     jurisdiction = EXCLUDED.jurisdiction,
-    status = EXCLUDED.status;
+    status = CASE
+        WHEN meetings.status IN ('completed', 'abandoned') AND EXCLUDED.status = 'scheduled'
+            THEN meetings.status
+        ELSE EXCLUDED.status
+    END;
 
 WITH race_src AS (
-    SELECT payload #> '{data,race}' AS race
+    SELECT (payload #> '{data,race}') ||
+        CASE WHEN NULLIF(payload->>'_betman_listing_race_status', '') IS NOT NULL
+            THEN jsonb_build_object('status', payload->>'_betman_listing_race_status')
+            ELSE '{}'::jsonb END AS race
     FROM tab_event_payloads_current
 )
 INSERT INTO races (
@@ -194,7 +226,11 @@ SET meeting_id = EXCLUDED.meeting_id,
     race_class_group = EXCLUDED.race_class_group,
     prize_money = EXCLUDED.prize_money,
     surface = EXCLUDED.surface,
-    status = EXCLUDED.status,
+    status = CASE
+        WHEN races.status IN ('finished', 'abandoned') AND EXCLUDED.status = 'scheduled'
+            THEN races.status
+        ELSE EXCLUDED.status
+    END,
     stake = EXCLUDED.stake,
     track_direction = EXCLUDED.track_direction,
     rail_position = EXCLUDED.rail_position,
@@ -339,6 +375,17 @@ ON CONFLICT (race_entry_id) DO UPDATE
 SET finish_position = EXCLUDED.finish_position,
     margin_lengths = EXCLUDED.margin_lengths,
     finish_time_s = EXCLUDED.finish_time_s;
+
+-- Official result rows are authoritative for finishing position. Some runner
+-- objects omit their position even though the matching result row is complete.
+UPDATE race_entries re
+SET final_position = rr.finish_position
+FROM race_results rr
+JOIN races r ON r.id = rr.race_id
+JOIN tab_event_import_ids imported ON imported.external_race_id = r.external_race_id
+WHERE rr.race_entry_id = re.id
+  AND rr.finish_position > 0
+  AND re.final_position IS DISTINCT FROM rr.finish_position;
 
 WITH source_rows AS (
     SELECT

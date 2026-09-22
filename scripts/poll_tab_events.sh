@@ -41,6 +41,7 @@ RETRIES=${BETMAN_DATA_TAB_RETRIES:-2}
 # midnight and a transient failed poll cannot leave a permanent history gap.
 LOOKBACK_DAYS=${BETMAN_DATA_TAB_LOOKBACK_DAYS:-1}
 LOOKAHEAD_DAYS=${BETMAN_DATA_TAB_LOOKAHEAD_DAYS:-1}
+RECONCILE_DAYS=${BETMAN_DATA_TAB_RECONCILE_DAYS:-14}
 
 date_offset() {
   local base_date=$1
@@ -60,14 +61,60 @@ end=${2:-$(TZ="${TIMEZONE}" date_offset "${today}" "+${LOOKAHEAD_DAYS}")}
 run_id=$(date -u +%Y%m%dT%H%M%SZ)
 jsonl=$(mktemp "/tmp/betman-tab-events-${run_id}.XXXXXX.jsonl")
 sql=$(mktemp "/tmp/betman-tab-load-${run_id}.XXXXXX.sql")
+reconcile_targets=$(mktemp "/tmp/betman-tab-reconcile-${run_id}.XXXXXX.tsv")
 
 cleanup() {
-  rm -f "${jsonl}" "${sql}"
+  rm -f "${jsonl}" "${sql}" "${reconcile_targets}"
   if [[ -n "${LOCK_DIR}" ]]; then
     rmdir "${LOCK_DIR}" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
+
+PSQL_DB=${BETMAN_DATA_DB:-betman_data}
+if [[ -n "${BETMAN_DATA_PSQL_USER:-}" ]]; then
+  PSQL=(sudo -u "${BETMAN_DATA_PSQL_USER}" psql -d "${PSQL_DB}")
+elif [[ "$(id -u)" = "0" ]] && id postgres >/dev/null 2>&1; then
+  PSQL=(sudo -u postgres psql -d "${PSQL_DB}")
+else
+  PSQL=(psql -d "${PSQL_DB}")
+fi
+
+# Recheck exact unresolved historical events without replaying every race from
+# the surrounding dates. The meetings listing supplies authoritative terminal
+# states when an event-detail document is stuck at Open after abandonment.
+"${PSQL[@]}" -X -At -F $'\t' -P pager=off -v ON_ERROR_STOP=1 \
+  -v reconcile_days="${RECONCILE_DAYS}" >"${reconcile_targets}" <<'SQL'
+SELECT DISTINCT r.external_race_id, m.jurisdiction, m.meeting_date
+FROM races r
+JOIN meetings m ON m.id = r.meeting_id
+WHERE r.external_race_id IS NOT NULL
+  AND m.jurisdiction IN ('NZ', 'AUS', 'HK')
+  AND m.meeting_date >= current_date - :reconcile_days::int
+  AND (
+    (
+      r.status = 'scheduled'
+      AND m.status <> 'abandoned'
+      AND r.scheduled_start_time < now() - interval '6 hours'
+    )
+    OR (
+      r.status = 'finished'
+      AND COALESCE(r.actual_start_time, r.scheduled_start_time) < now() - interval '45 minutes'
+      AND (
+        NOT EXISTS (SELECT 1 FROM race_results rr WHERE rr.race_id = r.id)
+        OR EXISTS (
+          SELECT 1
+          FROM race_results rr
+          JOIN race_entries re ON re.id = rr.race_entry_id
+          WHERE rr.race_id = r.id
+            AND rr.finish_position > 0
+            AND re.final_position IS DISTINCT FROM rr.finish_position
+        )
+      )
+    )
+  )
+ORDER BY m.meeting_date, m.jurisdiction, r.external_race_id;
+SQL
 
 echo "Polling TAB thoroughbred events ${start}..${end} (${COUNTRIES})"
 python3 scripts/fetch_tab_event_history.py \
@@ -78,6 +125,7 @@ python3 scripts/fetch_tab_event_history.py \
   --race-types T \
   --workers "${WORKERS}" \
   --retries "${RETRIES}" \
+  --reconcile-targets "${reconcile_targets}" \
   --out "${jsonl}"
 
 if [[ ! -s "${jsonl}" ]]; then
@@ -90,13 +138,6 @@ escaped_jsonl=${escaped_jsonl//\//\\/}
 sed "s/__TAB_EVENT_JSONL__/${escaped_jsonl}/g" scripts/load_tab_event_payloads.sql > "${sql}"
 chmod 644 "${jsonl}" "${sql}"
 
-PSQL_DB=${BETMAN_DATA_DB:-betman_data}
-if [[ -n "${BETMAN_DATA_PSQL_USER:-}" ]]; then
-  sudo -u "${BETMAN_DATA_PSQL_USER}" psql -d "${PSQL_DB}" -v ON_ERROR_STOP=1 -f "${sql}"
-elif [[ "$(id -u)" = "0" ]] && id postgres >/dev/null 2>&1; then
-  sudo -u postgres psql -d "${PSQL_DB}" -v ON_ERROR_STOP=1 -f "${sql}"
-else
-  psql -d "${PSQL_DB}" -v ON_ERROR_STOP=1 -f "${sql}"
-fi
+"${PSQL[@]}" -v ON_ERROR_STOP=1 -f "${sql}"
 loaded_count=$(wc -l < "${jsonl}")
 echo "Loaded ${loaded_count} thoroughbred TAB event payloads"

@@ -17,6 +17,10 @@ def test_monitor_covers_freshness_countries_features_and_storage() -> None:
         "odds_analytics",
         "disk_used_pct",
         "poller_result",
+        "stale_scheduled_races",
+        "finished_race_gaps",
+        "result_position_gaps",
+        "barrier_position_gaps",
     ):
         assert evidence in MONITOR
 
@@ -26,6 +30,8 @@ def test_monitor_is_persistent_and_fails_closed() -> None:
     assert 'if [[ "${healthy}" != "t"' in MONITOR
     assert "(:'poller_result' = 'success') AS poller_ok" in MONITOR
     assert "CASE WHEN NOT poller_ok THEN 'poller_failed' END" in MONITOR
+    assert "CASE WHEN NOT stale_scheduled_ok THEN 'stale_scheduled_races' END" in MONITOR
+    assert "CASE WHEN NOT finished_races_ok THEN 'finished_race_gaps' END" in MONITOR
 
 
 def test_quiet_calendar_is_not_reported_as_missing_coverage() -> None:

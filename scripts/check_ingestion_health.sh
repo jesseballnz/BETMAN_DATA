@@ -57,6 +57,48 @@ WITH freshness AS (
         (SELECT COUNT(*) FROM odds_analytics WHERE updated_at >= now() - interval '14 days') AS recent_odds_analytics,
         (SELECT COUNT(*) FROM odds_movements WHERE detected_at >= now() - interval '14 days') AS recent_odds_movements
     FROM upcoming
+), integrity AS (
+    SELECT
+        (
+            SELECT COUNT(*)
+            FROM races r
+            JOIN meetings m ON m.id = r.meeting_id
+            WHERE r.status = 'scheduled'
+              AND m.status <> 'abandoned'
+              AND r.scheduled_start_time < now() - interval '6 hours'
+        ) AS stale_scheduled_races,
+        (
+            SELECT COUNT(*)
+            FROM races r
+            WHERE r.status = 'finished'
+              AND COALESCE(r.actual_start_time, r.scheduled_start_time) < now() - interval '45 minutes'
+              AND (
+                NOT EXISTS (SELECT 1 FROM race_entries re WHERE re.race_id = r.id)
+                OR NOT EXISTS (SELECT 1 FROM race_results rr WHERE rr.race_id = r.id)
+                OR NOT EXISTS (SELECT 1 FROM barrier_outcomes bo WHERE bo.race_id = r.id)
+              )
+        ) AS finished_race_gaps,
+        (
+            SELECT COUNT(*)
+            FROM race_results rr
+            JOIN race_entries re ON re.id = rr.race_entry_id
+            JOIN races r ON r.id = rr.race_id
+            WHERE r.scheduled_start_time >= now() - interval '14 days'
+              AND rr.finish_position > 0
+              AND re.final_position IS DISTINCT FROM rr.finish_position
+        ) AS result_position_gaps,
+        (
+            SELECT COUNT(*)
+            FROM race_results rr
+            JOIN race_entries re ON re.id = rr.race_entry_id
+            JOIN races r ON r.id = rr.race_id
+            LEFT JOIN barrier_outcomes bo ON bo.race_entry_id = re.id
+            WHERE r.scheduled_start_time >= now() - interval '14 days'
+              AND rr.finish_position > 0
+              AND NOT re.scratched
+              AND re.barrier_number IS NOT NULL
+              AND bo.final_position IS DISTINCT FROM rr.finish_position
+        ) AS barrier_position_gaps
 ), checks AS (
     SELECT
         f.seconds,
@@ -70,9 +112,17 @@ WITH freshness AS (
         (cov.pedigree_ratio >= 0.95) AS pedigrees_ok,
         (cov.recent_conditions > 0) AS conditions_ok,
         (cov.recent_odds_analytics > 0) AS analytics_ok,
+        (i.stale_scheduled_races = 0) AS stale_scheduled_ok,
+        (i.finished_race_gaps = 0) AS finished_races_ok,
+        (i.result_position_gaps = 0) AS result_positions_ok,
+        (i.barrier_position_gaps = 0) AS barrier_positions_ok,
+        i.stale_scheduled_races,
+        i.finished_race_gaps,
+        i.result_position_gaps,
+        i.barrier_position_gaps,
         (:'poller_result' = 'success') AS poller_ok,
         (:disk_used_pct::int <= :max_disk_used_pct::int) AS disk_ok
-    FROM freshness f CROSS JOIN countries c CROSS JOIN coverage cov
+    FROM freshness f CROSS JOIN countries c CROSS JOIN coverage cov CROSS JOIN integrity i
 ), inserted AS (
     INSERT INTO ingestion_health_snapshots (
         checked_at, healthy, payload_freshness_seconds, countries, coverage, storage,
@@ -81,7 +131,10 @@ WITH freshness AS (
     SELECT
         now(),
         freshness_ok AND nz_ok AND aus_ok AND hk_ok AND features_ok
-            AND pedigrees_ok AND conditions_ok AND analytics_ok AND poller_ok AND disk_ok,
+            AND pedigrees_ok AND conditions_ok AND analytics_ok
+            AND stale_scheduled_ok AND finished_races_ok
+            AND result_positions_ok AND barrier_positions_ok
+            AND poller_ok AND disk_ok,
         seconds,
         countries,
         jsonb_build_object(
@@ -92,7 +145,11 @@ WITH freshness AS (
             'pedigree_ratio', pedigree_ratio,
             'recent_track_conditions', recent_conditions,
             'recent_odds_analytics', recent_odds_analytics,
-            'recent_odds_movements', recent_odds_movements
+            'recent_odds_movements', recent_odds_movements,
+            'stale_scheduled_races', stale_scheduled_races,
+            'finished_race_gaps', finished_race_gaps,
+            'result_position_gaps', result_position_gaps,
+            'barrier_position_gaps', barrier_position_gaps
         ),
         jsonb_build_object('disk_used_pct', :disk_used_pct::int),
         :'poller_result',
@@ -105,6 +162,10 @@ WITH freshness AS (
             CASE WHEN NOT pedigrees_ok THEN 'pedigrees_incomplete' END,
             CASE WHEN NOT conditions_ok THEN 'track_conditions_stale' END,
             CASE WHEN NOT analytics_ok THEN 'odds_analytics_stale' END,
+            CASE WHEN NOT stale_scheduled_ok THEN 'stale_scheduled_races' END,
+            CASE WHEN NOT finished_races_ok THEN 'finished_race_gaps' END,
+            CASE WHEN NOT result_positions_ok THEN 'result_position_gaps' END,
+            CASE WHEN NOT barrier_positions_ok THEN 'barrier_position_gaps' END,
             CASE WHEN NOT poller_ok THEN 'poller_failed' END,
             CASE WHEN NOT disk_ok THEN 'disk_pressure' END
         ], NULL))
